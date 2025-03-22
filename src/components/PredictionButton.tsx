@@ -19,6 +19,16 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
   const [modelData, setModelData] = useState<ModelData | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
+  // Cleanup when component unmounts
+  useEffect(() => {
+    return () => {
+      if (abortController) {
+        abortController.abort();
+      }
+    };
+  }, [abortController]);
 
   const handleRunPrediction = async () => {
     if (!stockData || stockData.timeSeries.length < 30) {
@@ -26,45 +36,73 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       return;
     }
     
+    // Cancel any previous prediction
+    if (abortController) {
+      abortController.abort();
+    }
+    
+    // Create new abort controller
+    const newAbortController = new AbortController();
+    setAbortController(newAbortController);
+    
     setIsLoading(true);
     setProgress(0);
     setProgressText("Initializing model...");
     
     try {
-      // Train model with reduced complexity for better performance
+      // Use simplified model parameters for better performance
       const trainedModel = await trainModelWithWorker(
         stockData,
-        10, // sequence length
-        50, // epochs - reduced from 100 to 50
+        7, // Reduced sequence length (was 10)
+        30, // Reduced epochs (was 50)
         32, // batch size
         (progress) => {
           const percentComplete = Math.floor((progress.epoch / progress.totalEpochs) * 100);
           setProgress(percentComplete);
           setProgressText(`Training model: ${progress.epoch}/${progress.totalEpochs} epochs (Loss: ${progress.loss.toFixed(4)})`);
-        }
+        },
+        newAbortController.signal
       );
+      
+      // Check if aborted
+      if (newAbortController.signal.aborted) {
+        throw new Error("Prediction was cancelled");
+      }
       
       setModelData(trainedModel);
       setProgressText("Making predictions...");
       
-      // Make predictions
+      // Make predictions with reduced days to predict
       const predictions = await predictWithWorker(
         trainedModel.modelData,
         stockData,
-        10, // sequence length
+        7, // sequence length (was 10)
         trainedModel.min,
         trainedModel.range,
-        7 // days to predict
+        5, // Reduced days to predict (was 7)
+        newAbortController.signal
       );
+      
+      // Check if aborted
+      if (newAbortController.signal.aborted) {
+        throw new Error("Prediction was cancelled");
+      }
       
       onPredictionComplete(predictions);
       
       toast.success("Prediction completed successfully");
     } catch (error) {
-      console.error("Prediction error:", error);
-      toast.error("Failed to make prediction. Please try again.");
+      if (error instanceof Error && error.message === "Prediction was cancelled") {
+        console.log("Prediction was cancelled");
+      } else {
+        console.error("Prediction error:", error);
+        toast.error("Failed to make prediction. Please try again.");
+      }
     } finally {
-      setIsLoading(false);
+      // Only update state if not aborted
+      if (!newAbortController.signal.aborted) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -76,7 +114,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           Machine Learning Prediction
         </CardTitle>
         <CardDescription>
-          Generate price predictions for the next 7 days using our ML model
+          Generate price predictions for the next 5 days using our ML model
         </CardDescription>
       </CardHeader>
       <CardContent className="pb-2">
@@ -84,6 +122,19 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           <>
             <Progress value={progress} className="w-full h-2" />
             <p className="text-sm text-muted-foreground mt-2">{progressText}</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-3 w-full"
+              onClick={() => {
+                if (abortController) {
+                  abortController.abort();
+                  setIsLoading(false);
+                }
+              }}
+            >
+              Cancel
+            </Button>
           </>
         ) : modelData ? (
           <div className="space-y-3">

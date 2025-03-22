@@ -1,4 +1,3 @@
-
 import * as tf from "@tensorflow/tfjs";
 import { toast } from "sonner";
 import { StockData, TimeSeriesData } from "@/types/stock";
@@ -9,7 +8,7 @@ const createWorker = () => {
     importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js');
 
     self.onmessage = async function(e) {
-      const { type, data } = e.data;
+      const { type, data, id } = e.data;
 
       if (type === 'train') {
         const { features, labels, epochs, batchSize } = data;
@@ -19,33 +18,31 @@ const createWorker = () => {
           const xs = tf.tensor2d(features);
           const ys = tf.tensor2d(labels);
           
-          // Create model
+          // Create model with simpler architecture
           const model = tf.sequential();
           
-          // Add layers
+          // Add layers - simplified architecture
           model.add(tf.layers.dense({
-            units: 50,
+            units: 32, // Reduced from 50
             activation: 'relu',
             inputShape: [features[0].length]
           }));
           
-          model.add(tf.layers.dropout({ rate: 0.2 }));
+          model.add(tf.layers.dropout({ rate: 0.1 })); // Reduced dropout
           
           model.add(tf.layers.dense({
-            units: 30,
+            units: 16, // Reduced from 30
             activation: 'relu'
           }));
-          
-          model.add(tf.layers.dropout({ rate: 0.2 }));
           
           model.add(tf.layers.dense({
             units: labels[0].length,
             activation: 'linear'
           }));
           
-          // Compile model
+          // Compile model with increased learning rate
           model.compile({
-            optimizer: tf.train.adam(0.001),
+            optimizer: tf.train.adam(0.005), // Increased from 0.001
             loss: 'meanSquaredError',
             metrics: ['mse']
           });
@@ -60,10 +57,11 @@ const createWorker = () => {
             callbacks: {
               onEpochEnd: (epoch, logs) => {
                 const now = Date.now();
-                // Only send update every 500ms to avoid flooding the main thread
-                if (now - lastUpdate > 500) {
+                // Only send update every 300ms to avoid flooding the main thread
+                if (now - lastUpdate > 300) {
                   self.postMessage({
                     type: 'progress',
+                    id,
                     data: {
                       epoch,
                       totalEpochs: epochs,
@@ -85,6 +83,7 @@ const createWorker = () => {
           // Send final model and training history back
           self.postMessage({
             type: 'complete',
+            id,
             data: {
               model: modelData,
               history: {
@@ -98,10 +97,12 @@ const createWorker = () => {
           xs.dispose();
           ys.dispose();
           model.dispose();
+          tf.disposeVariables(); // Add explicit cleanup
           
         } catch (error) {
           self.postMessage({
             type: 'error',
+            id,
             data: error.message
           });
         }
@@ -127,6 +128,7 @@ const createWorker = () => {
           
           self.postMessage({
             type: 'prediction',
+            id,
             data: predictionData
           });
           
@@ -138,10 +140,12 @@ const createWorker = () => {
           } else {
             prediction.dispose();
           }
+          tf.disposeVariables(); // Add explicit cleanup
           
         } catch (error) {
           self.postMessage({
             type: 'error',
+            id,
             data: error.message
           });
         }
@@ -242,13 +246,19 @@ const extractFeaturesForPrediction = (
   return [normalizedPrices];
 };
 
+// Generate unique ID for requests
+const generateRequestId = () => {
+  return Math.random().toString(36).substring(2, 15);
+};
+
 // Train model with worker
 export const trainModelWithWorker = (
   stockData: StockData,
   sequenceLength: number = 10,
   epochs: number = 100,
   batchSize: number = 32,
-  onProgress?: (progress: { epoch: number; totalEpochs: number; loss: number }) => void
+  onProgress?: (progress: { epoch: number; totalEpochs: number; loss: number }) => void,
+  abortSignal?: AbortSignal
 ): Promise<{
   modelData: any;
   min: number;
@@ -257,16 +267,40 @@ export const trainModelWithWorker = (
 }> => {
   return new Promise((resolve, reject) => {
     const worker = createWorker();
+    const requestId = generateRequestId();
 
-    // Prepare data
+    // Set up abort handling
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', () => {
+        worker.terminate();
+        reject(new Error("Prediction was cancelled"));
+      });
+      
+      // If already aborted, reject immediately
+      if (abortSignal.aborted) {
+        reject(new Error("Prediction was cancelled"));
+        return;
+      }
+    }
+
+    // Prepare data - Use smaller slice of data for better performance
+    const { timeSeries } = stockData;
+    const dataForTraining = {
+      ...stockData,
+      timeSeries: timeSeries.slice(-365) // Use at most last year of data
+    };
+    
     const { features, labels, min, range } = prepareTrainingData(
-      stockData,
+      dataForTraining,
       sequenceLength
     );
 
     // Set up message handling
     worker.onmessage = (e) => {
-      const { type, data } = e.data;
+      const { type, id, data } = e.data;
+      
+      // Ignore messages for other requests
+      if (id !== requestId) return;
 
       if (type === "progress" && onProgress) {
         onProgress(data);
@@ -287,6 +321,7 @@ export const trainModelWithWorker = (
     // Start training
     worker.postMessage({
       type: "train",
+      id: requestId,
       data: {
         features,
         labels,
@@ -304,10 +339,26 @@ export const predictWithWorker = (
   sequenceLength: number = 10,
   min: number,
   range: number,
-  daysToPredict: number = 7
+  daysToPredict: number = 7,
+  abortSignal?: AbortSignal
 ): Promise<{ date: string; prediction: number }[]> => {
   return new Promise((resolve, reject) => {
     const worker = createWorker();
+    const requestId = generateRequestId();
+
+    // Set up abort handling
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', () => {
+        worker.terminate();
+        reject(new Error("Prediction was cancelled"));
+      });
+      
+      // If already aborted, reject immediately
+      if (abortSignal.aborted) {
+        reject(new Error("Prediction was cancelled"));
+        return;
+      }
+    }
 
     // Prepare initial features
     let features = extractFeaturesForPrediction(
@@ -324,166 +375,92 @@ export const predictWithWorker = (
     for (let i = 1; i <= daysToPredict; i++) {
       const nextDate = new Date(lastDate);
       nextDate.setDate(lastDate.getDate() + i);
+      // Skip weekends
+      while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+        nextDate.setDate(nextDate.getDate() + 1);
+      }
       futureDates.push(nextDate.toISOString().split('T')[0]);
     }
 
-    // Set up message handling
-    worker.onmessage = (e) => {
-      const { type, data } = e.data;
-
-      if (type === "prediction") {
-        const predictions: { date: string; prediction: number }[] = [];
+    // Make all predictions at once to improve performance
+    const makeBatchPredictions = async () => {
+      try {
+        const allPredictions: { date: string; prediction: number }[] = [];
+        let currentFeatures = [...features[0]];
         
-        // Current prediction is just for the next day
-        const normalizedPrediction = data[0][0];
-        const prediction = denormalizeData(normalizedPrediction, min, range) as number;
-        
-        // Store the prediction for the current day
-        predictions.push({
-          date: futureDates[0],
-          prediction,
+        // First prediction
+        worker.postMessage({
+          type: "predict",
+          id: requestId,
+          data: {
+            model: modelData,
+            features: [currentFeatures]
+          }
         });
         
-        // If we need more predictions, we need to update features and predict again
-        if (daysToPredict > 1) {
-          // Create a copy of the features
-          const newFeatures = [...features[0]];
+        // Set up message handling for sequence of predictions
+        for (let i = 0; i < daysToPredict; i++) {
+          // Wait for response
+          const result = await new Promise((res, rej) => {
+            const messageHandler = (e: MessageEvent) => {
+              const { type, id, data } = e.data;
+              
+              // Ignore messages for other requests
+              if (id !== requestId) return;
+              
+              if (type === "prediction") {
+                res(data[0][0]);
+                worker.removeEventListener('message', messageHandler);
+              } else if (type === "error") {
+                rej(new Error(data));
+                worker.removeEventListener('message', messageHandler);
+              }
+            };
+            
+            worker.addEventListener('message', messageHandler);
+          });
           
-          // Remove the oldest value
-          newFeatures.shift();
+          // Add to predictions
+          const normalizedPrediction = result as number;
+          const prediction = denormalizeData(normalizedPrediction, min, range) as number;
           
-          // Add the new prediction
-          newFeatures.push(normalizedPrediction);
+          allPredictions.push({
+            date: futureDates[i],
+            prediction
+          });
           
-          // Make recursive predictions for the remaining days
-          predictRemainingDays(
-            worker,
-            modelData,
-            [newFeatures],
-            futureDates.slice(1),
-            predictions,
-            min,
-            range,
-            1
-          );
-        } else {
-          // We're done, resolve the promise
-          resolve(predictions);
-          worker.terminate();
+          // Update features for next prediction, if needed
+          if (i < daysToPredict - 1) {
+            currentFeatures = [...currentFeatures.slice(1), normalizedPrediction];
+            
+            // Check for abort before continuing
+            if (abortSignal?.aborted) {
+              throw new Error("Prediction was cancelled");
+            }
+            
+            // Send next prediction request
+            worker.postMessage({
+              type: "predict",
+              id: requestId,
+              data: {
+                model: modelData,
+                features: [currentFeatures]
+              }
+            });
+          }
         }
-      } else if (type === "error") {
-        reject(new Error(data));
+        
+        return allPredictions;
+      } finally {
+        // Always terminate worker when done
         worker.terminate();
       }
     };
-
-    // Start prediction for the first day
-    worker.postMessage({
-      type: "predict",
-      data: {
-        model: modelData,
-        features,
-      },
-    });
-  });
-};
-
-// Helper function to recursively predict remaining days
-const predictRemainingDays = (
-  worker: Worker,
-  modelData: any,
-  features: number[][],
-  futureDates: string[],
-  predictions: { date: string; prediction: number }[],
-  min: number,
-  range: number,
-  currentDay: number
-) => {
-  // Use a local variable to store the original handler
-  const handleMessage = (e: MessageEvent) => {
-    const { type, data } = e.data;
-
-    if (type === "prediction") {
-      // Get the normalized prediction
-      const normalizedPrediction = data[0][0];
-      
-      // Denormalize
-      const prediction = denormalizeData(normalizedPrediction, min, range) as number;
-      
-      // Add to predictions
-      predictions.push({
-        date: futureDates[0],
-        prediction,
-      });
-      
-      // If we have more days to predict
-      if (currentDay < futureDates.length - 1) {
-        // Create a copy of the features
-        const newFeatures = [...features[0]];
-        
-        // Remove the oldest value
-        newFeatures.shift();
-        
-        // Add the new prediction
-        newFeatures.push(normalizedPrediction);
-        
-        // Remove current message handler
-        worker.removeEventListener('message', handleMessage);
-        
-        // Predict the next day
-        predictRemainingDays(
-          worker,
-          modelData,
-          [newFeatures],
-          futureDates.slice(1),
-          predictions,
-          min,
-          range,
-          currentDay + 1
-        );
-      } else {
-        // We're done, trigger completion
-        worker.removeEventListener('message', handleMessage);
-        
-        // Complete by resolving the promise through the worker's onmessage
-        if (worker.onmessage) {
-          const completeEvent = new MessageEvent("message", {
-            data: {
-              type: "complete",
-              data: { predictions },
-            },
-          });
-          
-          worker.onmessage(completeEvent);
-        }
-      }
-    } else if (type === "error") {
-      // Pass the error
-      worker.removeEventListener('message', handleMessage);
-      
-      if (worker.onmessage) {
-        const errorEvent = new MessageEvent("message", {
-          data: {
-            type: "error",
-            data: data,
-          },
-        });
-        
-        worker.onmessage(errorEvent);
-      }
-    }
-  };
-
-  // Add the message handler
-  worker.addEventListener('message', handleMessage);
-
-  // Start prediction for the current day
-  worker.postMessage({
-    type: "predict",
-    data: {
-      model: modelData,
-      features,
-    },
+    
+    // Run the predictions
+    makeBatchPredictions()
+      .then(resolve)
+      .catch(reject);
   });
 };
 
@@ -535,6 +512,10 @@ export const evaluateModel = (
 // Initialize TensorFlow.js
 export const initializeTensorFlow = async (): Promise<void> => {
   try {
+    // Set memory management options
+    tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD', 0); // Lower threshold for texture deletion
+    tf.env().set('WEBGL_FORCE_F16_TEXTURES', true); // Use F16 textures to reduce memory
+    
     await tf.ready();
     console.log("TensorFlow.js initialized successfully");
   } catch (error) {

@@ -6,7 +6,7 @@ import { getMockStockData, getMockStockSearch } from "./mockData";
 import { getFromCache as getSearchFromCache, saveToCache as saveSearchToCache } from "./searchCache";
 
 // AlphaVantage API key
-const API_KEY = "demo"; // Replace with your API key
+const API_KEY = "O1V4V096NVYMBTS9"; // Replace with your API key
 
 // Base URL for the AlphaVantage API
 const BASE_URL = "https://www.alphavantage.co/query";

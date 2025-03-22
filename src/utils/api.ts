@@ -1,10 +1,9 @@
-
 import { toast } from "sonner";
 import { StockData, StockSearchResult } from "@/types/stock";
 import { getFromCache, saveToCache } from "./cache";
 import { getMockEnabled } from "./config";
 import { getMockStockData, getMockStockSearch } from "./mockData";
-import { searchIndianStocks } from "@/data/indianStocks";
+import { getFromCache as getSearchFromCache, saveToCache as saveSearchToCache } from "./searchCache";
 
 // AlphaVantage API key
 const API_KEY = "demo"; // Replace with your API key
@@ -20,10 +19,13 @@ export const searchStocks = async (query: string): Promise<StockSearchResult[]> 
       return getMockStockSearch(query);
     }
 
-    // Use hardcoded Indian stocks data instead of API
-    return searchIndianStocks(query);
+    // Check cache first
+    const cachedResults = getSearchFromCache(query);
+    if (cachedResults) {
+      return cachedResults;
+    }
 
-    /* Uncomment if you want to use the API instead
+    // Use the API for real search
     const response = await fetch(
       `${BASE_URL}?function=SYMBOL_SEARCH&keywords=${query}&apikey=${API_KEY}`
     );
@@ -35,7 +37,7 @@ export const searchStocks = async (query: string): Promise<StockSearchResult[]> 
     const data = await response.json();
     
     if (data.bestMatches) {
-      return data.bestMatches.map((match: any) => ({
+      const results = data.bestMatches.map((match: any) => ({
         symbol: match["1. symbol"],
         name: match["2. name"],
         type: match["3. type"],
@@ -45,14 +47,21 @@ export const searchStocks = async (query: string): Promise<StockSearchResult[]> 
         timezone: match["7. timezone"],
         currency: match["8. currency"],
       }));
+      
+      // Save to cache
+      saveSearchToCache(query, results);
+      
+      return results;
     }
-    */
     
     return [];
   } catch (error) {
     console.error("Error searching stocks:", error);
     toast.error("Failed to search stocks. Please try again later.");
-    return [];
+    
+    // Fallback to Indian stocks search if API fails
+    const { searchIndianStocks } = await import("@/data/indianStocks");
+    return searchIndianStocks(query);
   }
 };
 

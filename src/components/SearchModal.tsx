@@ -1,12 +1,14 @@
 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, X, Loader2 } from "lucide-react";
+import { Search, X, Loader2, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StockSearchResult } from "@/types/stock";
 import { searchStocks } from "@/utils/api";
 import { cn } from "@/lib/utils";
+import { isInFavorites, addToFavorites, removeFromFavorites } from "@/utils/storage";
+import { toast } from "sonner";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -17,6 +19,7 @@ const SearchModal = ({ isOpen, onClose }: SearchModalProps) => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StockSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [favoriteStates, setFavoriteStates] = useState<Record<string, boolean>>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,6 +33,13 @@ const SearchModal = ({ isOpen, onClose }: SearchModalProps) => {
       try {
         const searchResults = await searchStocks(query);
         setResults(searchResults);
+        
+        // Initialize favorite states
+        const newFavoriteStates: Record<string, boolean> = {};
+        searchResults.forEach(stock => {
+          newFavoriteStates[stock.symbol] = isInFavorites(stock.symbol);
+        });
+        setFavoriteStates(newFavoriteStates);
       } catch (error) {
         console.error("Search error:", error);
       } finally {
@@ -46,6 +56,26 @@ const SearchModal = ({ isOpen, onClose }: SearchModalProps) => {
     onClose();
     setQuery("");
     setResults([]);
+  };
+
+  const handleToggleFavorite = (e: React.MouseEvent, stock: StockSearchResult) => {
+    e.stopPropagation(); // Prevent triggering the parent button click
+    
+    const isFavorite = favoriteStates[stock.symbol];
+    
+    if (isFavorite) {
+      removeFromFavorites(stock.symbol);
+      toast.success(`Removed ${stock.name} from favorites`);
+    } else {
+      addToFavorites(stock.symbol);
+      toast.success(`Added ${stock.name} to favorites`);
+    }
+    
+    // Update state
+    setFavoriteStates(prev => ({
+      ...prev,
+      [stock.symbol]: !isFavorite
+    }));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -119,7 +149,25 @@ const SearchModal = ({ isOpen, onClose }: SearchModalProps) => {
                         {stock.name}
                       </div>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">{stock.region}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs text-muted-foreground mt-1">{stock.region}</div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-8 w-8 transition-all hover:scale-110",
+                          favoriteStates[stock.symbol] ? "text-yellow-500 hover:text-yellow-600" : "text-muted-foreground"
+                        )}
+                        onClick={(e) => handleToggleFavorite(e, stock)}
+                      >
+                        <Star 
+                          className={cn(
+                            "h-4 w-4",
+                            favoriteStates[stock.symbol] ? "fill-yellow-500" : "fill-none"
+                          )} 
+                        />
+                      </Button>
+                    </div>
                   </button>
                 </li>
               ))}

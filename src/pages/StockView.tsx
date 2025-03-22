@@ -1,10 +1,10 @@
-
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
 import StockChart from "@/components/StockChart";
 import StockDetails from "@/components/StockDetails";
 import PredictionButton from "@/components/PredictionButton";
+import PredictionInsight from "@/components/PredictionInsight"; 
 import { StockData, PredictionResult } from "@/types/stock";
 import { getStockData } from "@/utils/api";
 import { ArrowLeft } from "lucide-react";
@@ -57,6 +57,13 @@ const StockView = () => {
     setPredictions(newPredictions);
   };
 
+  const getCurrentPrice = () => {
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
+      return 0;
+    }
+    return stockData.timeSeries[stockData.timeSeries.length - 1].close;
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <CustomNavbar />
@@ -93,16 +100,32 @@ const StockView = () => {
               <>
                 <StockDetails stockData={stockData} className="mb-8" />
                 
+                <div className="mb-8">
+                  <StockChart 
+                    stockData={stockData}
+                    className="w-full"
+                    showPredictions={false}
+                    title="Historical Price Chart"
+                  />
+                </div>
+                
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                   <StockChart 
                     stockData={stockData} 
                     predictions={predictions} 
                     className="lg:col-span-2"
+                    title="Price Prediction Chart"
                   />
-                  <PredictionButton
-                    stockData={stockData}
-                    onPredictionComplete={handlePredictionComplete}
-                  />
+                  <div className="space-y-6">
+                    <PredictionButton
+                      stockData={stockData}
+                      onPredictionComplete={handlePredictionComplete}
+                    />
+                    <PredictionInsight 
+                      predictions={predictions}
+                      currentPrice={getCurrentPrice()}
+                    />
+                  </div>
                 </div>
                 
                 <Tabs defaultValue="overview" className="mb-8">

@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -16,6 +16,9 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StockData } from "@/types/stock";
 import { cn } from "@/lib/utils";
+import { Maximize2 } from "lucide-react";
+import { Button } from "./ui/button";
+import FullScreenChart from "./FullScreenChart";
 
 interface PredictionData {
   date: string;
@@ -26,6 +29,8 @@ interface StockChartProps {
   stockData: StockData;
   predictions?: PredictionData[];
   className?: string;
+  showPredictions?: boolean;
+  title?: string;
 }
 
 // Define the ChartDataPoint type to properly include the prediction property
@@ -47,9 +52,16 @@ const timeRanges = [
   { label: "All", days: Infinity },
 ];
 
-const StockChart = ({ stockData, predictions = [], className }: StockChartProps) => {
+const StockChart = ({ 
+  stockData, 
+  predictions = [], 
+  className,
+  showPredictions = true,
+  title = "Price Chart" 
+}: StockChartProps) => {
   const [timeRange, setTimeRange] = useState<number>(30);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [showFullScreen, setShowFullScreen] = useState(false);
 
   useEffect(() => {
     if (!stockData || !stockData.timeSeries) return;
@@ -69,8 +81,8 @@ const StockChart = ({ stockData, predictions = [], className }: StockChartProps)
       volume: data.volume,
     }));
 
-    // Add prediction data if any
-    if (predictions && predictions.length > 0) {
+    // Add prediction data if any and if we should show predictions
+    if (showPredictions && predictions && predictions.length > 0) {
       // Create a map of all dates we already have
       const existingDates = new Set(formattedData.map(d => d.date));
 
@@ -95,7 +107,7 @@ const StockChart = ({ stockData, predictions = [], className }: StockChartProps)
     formattedData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     setChartData(formattedData);
-  }, [stockData, timeRange, predictions]);
+  }, [stockData, timeRange, predictions, showPredictions]);
 
   // Calculate price change and percentage
   const calculatePriceChange = () => {
@@ -155,101 +167,122 @@ const StockChart = ({ stockData, predictions = [], className }: StockChartProps)
   };
 
   return (
-    <Card className={cn("overflow-hidden", className)}>
-      <CardHeader className="space-y-0 pb-2">
-        <div className="flex justify-between items-center">
-          <CardTitle className="text-xl">
-            Price Chart
-          </CardTitle>
-          <div className="flex items-center gap-1 text-xs font-medium">
-            <span className={isPositive ? "text-success" : "text-danger"}>
-              {isPositive ? "+" : ""}{change.toFixed(2)} ({changePercent.toFixed(2)}%)
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex gap-1">
-            {timeRanges.map((range) => (
-              <button
-                key={range.label}
-                className={cn(
-                  "px-3 py-1 text-xs font-medium rounded-full transition-colors",
-                  timeRange === range.days
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                )}
-                onClick={() => setTimeRange(range.days)}
+    <>
+      <Card className={cn("overflow-hidden", className)}>
+        <CardHeader className="space-y-0 pb-2">
+          <div className="flex justify-between items-center">
+            <CardTitle className="text-xl">
+              {title}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <div className={isPositive ? "text-success" : "text-danger"}>
+                <span className="text-xs font-medium">
+                  {isPositive ? "+" : ""}{change.toFixed(2)} ({changePercent.toFixed(2)}%)
+                </span>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="p-1 h-auto" 
+                onClick={() => setShowFullScreen(true)}
               >
-                {range.label}
-              </button>
-            ))}
+                <Maximize2 className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 pb-4">
-        <div className="w-full h-[300px] mt-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData}>
-              <defs>
-                <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
-                </linearGradient>
-                <linearGradient id="colorPrediction" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-              <XAxis 
-                dataKey="date" 
-                tickFormatter={formatDate} 
-                minTickGap={30}
-                tick={{ fontSize: 12 }}
-                tickMargin={10}
-                className="text-xs text-muted-foreground"
-              />
-              <YAxis 
-                domain={['auto', 'auto']}
-                tick={{ fontSize: 12 }}
-                tickMargin={10}
-                className="text-xs text-muted-foreground"
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ fontSize: '12px' }} />
-              <Area 
-                type="monotone" 
-                dataKey="price" 
-                name="Price"
-                stroke="hsl(var(--primary))" 
-                fillOpacity={1}
-                fill="url(#colorPrice)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 6 }}
-              />
-              {predictions && predictions.length > 0 && (
-                <Line 
+          <div className="flex items-center justify-between mt-2">
+            <div className="flex gap-1">
+              {timeRanges.map((range) => (
+                <button
+                  key={range.label}
+                  className={cn(
+                    "px-3 py-1 text-xs font-medium rounded-full transition-colors",
+                    timeRange === range.days
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  )}
+                  onClick={() => setTimeRange(range.days)}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0 pb-4">
+          <div className="w-full h-[300px] mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorPrediction" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+                <XAxis 
+                  dataKey="date" 
+                  tickFormatter={formatDate} 
+                  minTickGap={30}
+                  tick={{ fontSize: 12 }}
+                  tickMargin={10}
+                  className="text-xs text-muted-foreground"
+                />
+                <YAxis 
+                  domain={['auto', 'auto']}
+                  tick={{ fontSize: 12 }}
+                  tickMargin={10}
+                  className="text-xs text-muted-foreground"
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                <Area 
                   type="monotone" 
-                  dataKey="prediction" 
-                  name="Prediction"
-                  stroke="hsl(var(--accent-foreground))" 
+                  dataKey="price" 
+                  name="Price"
+                  stroke="hsl(var(--primary))" 
+                  fillOpacity={1}
+                  fill="url(#colorPrice)"
                   strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={{ r: 3 }}
+                  dot={false}
                   activeDot={{ r: 6 }}
                 />
-              )}
-              <ReferenceLine 
-                y={stockData.timeSeries[stockData.timeSeries.length - 1]?.close} 
-                stroke="hsl(var(--muted-foreground))" 
-                strokeDasharray="3 3" 
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+                {showPredictions && predictions && predictions.length > 0 && (
+                  <Line 
+                    type="monotone" 
+                    dataKey="prediction" 
+                    name="Prediction"
+                    stroke="hsl(var(--accent-foreground))" 
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 6 }}
+                  />
+                )}
+                <ReferenceLine 
+                  y={stockData.timeSeries[stockData.timeSeries.length - 1]?.close} 
+                  stroke="hsl(var(--muted-foreground))" 
+                  strokeDasharray="3 3" 
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      <FullScreenChart 
+        open={showFullScreen} 
+        onOpenChange={setShowFullScreen} 
+        stockData={stockData} 
+        predictions={predictions}
+        title={title}
+        showPredictions={showPredictions}
+      />
+    </>
   );
 };
 

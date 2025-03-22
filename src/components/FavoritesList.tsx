@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +7,11 @@ import { StockData } from "@/types/stock";
 import { TrendingUp, TrendingDown, BookmarkX } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const FavoritesList = () => {
+interface FavoritesListProps {
+  fullWidth?: boolean;
+}
+
+const FavoritesList = ({ fullWidth }: FavoritesListProps = {}) => {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [stocksData, setStocksData] = useState<Record<string, StockData | null>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -25,7 +28,6 @@ const FavoritesList = () => {
 
     loadFavorites();
 
-    // Set up interval to refresh every minute
     const interval = setInterval(loadFavorites, 60000);
     
     return () => clearInterval(interval);
@@ -72,7 +74,7 @@ const FavoritesList = () => {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className={cn("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4", fullWidth && "w-full")}>
         {[1, 2, 3].map((i) => (
           <Card key={i} className="animate-pulse">
             <CardHeader className="pb-4">
@@ -104,7 +106,7 @@ const FavoritesList = () => {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className={cn("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4", fullWidth && "w-full")}>
       {favorites.map((symbol) => {
         const stock = stocksData[symbol];
         

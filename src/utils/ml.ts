@@ -399,10 +399,8 @@ const predictRemainingDays = (
   range: number,
   currentDay: number
 ) => {
-  // Set up message handling for this prediction
-  const originalOnMessage = worker.onmessage;
-  
-  worker.onmessage = (e) => {
+  // Use a local variable to store the original handler
+  const handleMessage = (e: MessageEvent) => {
     const { type, data } = e.data;
 
     if (type === "prediction") {
@@ -429,6 +427,9 @@ const predictRemainingDays = (
         // Add the new prediction
         newFeatures.push(normalizedPrediction);
         
+        // Remove current message handler
+        worker.removeEventListener('message', handleMessage);
+        
         // Predict the next day
         predictRemainingDays(
           worker,
@@ -441,33 +442,40 @@ const predictRemainingDays = (
           currentDay + 1
         );
       } else {
-        // We're done, restore the original onmessage handler
-        worker.onmessage = originalOnMessage;
+        // We're done, trigger completion
+        worker.removeEventListener('message', handleMessage);
         
-        // Trigger the originalOnMessage with a complete event
-        const completeEvent = new MessageEvent("message", {
+        // Complete by resolving the promise through the worker's onmessage
+        if (worker.onmessage) {
+          const completeEvent = new MessageEvent("message", {
+            data: {
+              type: "complete",
+              data: { predictions },
+            },
+          });
+          
+          worker.onmessage(completeEvent);
+        }
+      }
+    } else if (type === "error") {
+      // Pass the error
+      worker.removeEventListener('message', handleMessage);
+      
+      if (worker.onmessage) {
+        const errorEvent = new MessageEvent("message", {
           data: {
-            type: "complete",
-            data: { predictions },
+            type: "error",
+            data: data,
           },
         });
         
-        originalOnMessage!(completeEvent);
+        worker.onmessage(errorEvent);
       }
-    } else if (type === "error") {
-      // Restore original handler and pass the error
-      worker.onmessage = originalOnMessage;
-      
-      const errorEvent = new MessageEvent("message", {
-        data: {
-          type: "error",
-          data: data,
-        },
-      });
-      
-      originalOnMessage!(errorEvent);
     }
   };
+
+  // Add the message handler
+  worker.addEventListener('message', handleMessage);
 
   // Start prediction for the current day
   worker.postMessage({

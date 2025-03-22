@@ -5,7 +5,7 @@ const CONFIG_KEY = "app-config";
 // Default config
 const DEFAULT_CONFIG = {
   useMockData: true,
-  theme: "light",
+  theme: "light" as const,
 };
 
 // Interface for the config
@@ -18,7 +18,14 @@ interface AppConfig {
 export const loadConfig = (): AppConfig => {
   try {
     const configStr = localStorage.getItem(CONFIG_KEY);
-    return configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+    const parsedConfig = configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+    
+    // Ensure theme is either "light" or "dark"
+    if (parsedConfig.theme !== "light" && parsedConfig.theme !== "dark") {
+      parsedConfig.theme = "light";
+    }
+    
+    return parsedConfig as AppConfig;
   } catch (error) {
     console.error("Error loading config:", error);
     return DEFAULT_CONFIG;

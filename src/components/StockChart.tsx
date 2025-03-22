@@ -28,6 +28,17 @@ interface StockChartProps {
   className?: string;
 }
 
+// Define the ChartDataPoint type to properly include the prediction property
+interface ChartDataPoint {
+  date: string;
+  price?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+  prediction?: number;
+}
+
 const timeRanges = [
   { label: "1M", days: 30 },
   { label: "3M", days: 90 },
@@ -38,7 +49,7 @@ const timeRanges = [
 
 const StockChart = ({ stockData, predictions = [], className }: StockChartProps) => {
   const [timeRange, setTimeRange] = useState<number>(30);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
 
   useEffect(() => {
     if (!stockData || !stockData.timeSeries) return;
@@ -49,7 +60,7 @@ const StockChart = ({ stockData, predictions = [], className }: StockChartProps)
       : stockData.timeSeries.slice(-timeRange);
 
     // Create chart data with predictions merged
-    const formattedData = filteredData.map(data => ({
+    const formattedData: ChartDataPoint[] = filteredData.map(data => ({
       date: data.date,
       price: data.close,
       open: data.open,

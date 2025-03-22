@@ -1,0 +1,87 @@
+
+// Config storage key
+const CONFIG_KEY = "app-config";
+
+// Default config
+const DEFAULT_CONFIG = {
+  useMockData: true,
+  theme: "light",
+};
+
+// Interface for the config
+interface AppConfig {
+  useMockData: boolean;
+  theme: "light" | "dark";
+}
+
+// Load config from localStorage
+export const loadConfig = (): AppConfig => {
+  try {
+    const configStr = localStorage.getItem(CONFIG_KEY);
+    return configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+  } catch (error) {
+    console.error("Error loading config:", error);
+    return DEFAULT_CONFIG;
+  }
+};
+
+// Save config to localStorage
+export const saveConfig = (config: AppConfig): void => {
+  try {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  } catch (error) {
+    console.error("Error saving config:", error);
+  }
+};
+
+// Check if mock data is enabled
+export const getMockEnabled = (): boolean => {
+  return loadConfig().useMockData;
+};
+
+// Toggle mock data
+export const toggleMockData = (): boolean => {
+  const config = loadConfig();
+  config.useMockData = !config.useMockData;
+  saveConfig(config);
+  return config.useMockData;
+};
+
+// Get current theme
+export const getTheme = (): "light" | "dark" => {
+  return loadConfig().theme;
+};
+
+// Set theme
+export const setTheme = (theme: "light" | "dark"): void => {
+  const config = loadConfig();
+  config.theme = theme;
+  saveConfig(config);
+  
+  // Apply theme to document
+  if (theme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+};
+
+// Toggle theme
+export const toggleTheme = (): "light" | "dark" => {
+  const currentTheme = getTheme();
+  const newTheme = currentTheme === "light" ? "dark" : "light";
+  setTheme(newTheme);
+  return newTheme;
+};
+
+// Initialize config when the application starts
+export const initializeConfig = (): void => {
+  const config = loadConfig();
+  
+  // Apply theme
+  if (config.theme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
+};

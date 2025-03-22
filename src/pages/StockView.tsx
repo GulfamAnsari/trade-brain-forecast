@@ -1,0 +1,200 @@
+
+import { useEffect, useState } from "react";
+import { useParams, Link } from "react-router-dom";
+import Navbar from "@/components/Navbar";
+import StockChart from "@/components/StockChart";
+import StockDetails from "@/components/StockDetails";
+import PredictionButton from "@/components/PredictionButton";
+import { StockData, PredictionResult } from "@/types/stock";
+import { getStockData } from "@/utils/api";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const StockView = () => {
+  const { symbol } = useParams<{ symbol: string }>();
+  const [stockData, setStockData] = useState<StockData | null>(null);
+  const [predictions, setPredictions] = useState<PredictionResult[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchStock = async () => {
+      if (!symbol) {
+        setError("No stock symbol provided");
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const data = await getStockData(symbol);
+        
+        if (!data) {
+          setError("Failed to fetch stock data");
+        } else {
+          setStockData(data);
+        }
+      } catch (err) {
+        console.error("Error fetching stock:", err);
+        setError("Failed to fetch stock data. Please try again later.");
+        toast.error("Failed to fetch stock data");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchStock();
+  }, [symbol]);
+
+  const handlePredictionComplete = (newPredictions: PredictionResult[]) => {
+    setPredictions(newPredictions);
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Navbar />
+      
+      <main className="flex-1 container py-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="mb-8">
+            <Button variant="ghost" asChild className="mb-4">
+              <Link to="/" className="flex items-center text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Dashboard
+              </Link>
+            </Button>
+            
+            {error ? (
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+            
+            {isLoading ? (
+              <>
+                <Skeleton className="h-10 w-2/3 mb-2" />
+                <Skeleton className="h-6 w-1/3 mb-8" />
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                  <Skeleton className="h-[320px] lg:col-span-2" />
+                  <Skeleton className="h-[320px]" />
+                </div>
+                
+                <Skeleton className="h-[300px] mb-8" />
+              </>
+            ) : stockData ? (
+              <>
+                <StockDetails stockData={stockData} className="mb-8" />
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                  <StockChart 
+                    stockData={stockData} 
+                    predictions={predictions} 
+                    className="lg:col-span-2"
+                  />
+                  <PredictionButton
+                    stockData={stockData}
+                    onPredictionComplete={handlePredictionComplete}
+                  />
+                </div>
+                
+                <Tabs defaultValue="overview" className="mb-8">
+                  <TabsList className="mb-4">
+                    <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="financials">Financials</TabsTrigger>
+                    <TabsTrigger value="news">News</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="overview" className="space-y-4">
+                    <Card className="p-6">
+                      <h3 className="text-xl font-semibold mb-4">Company Overview</h3>
+                      <p className="text-muted-foreground mb-4">
+                        {stockData.name} is a publicly traded company on the Indian stock exchange.
+                        This section would typically contain a company description, sector information,
+                        and other relevant details about the company's business and operations.
+                      </p>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <h4 className="font-medium mb-2">Key Statistics</h4>
+                          <ul className="space-y-2 text-sm">
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">Market Cap</span>
+                              <span>₹ --</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">P/E Ratio</span>
+                              <span>-- x</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">Dividend Yield</span>
+                              <span>--%</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">52 Week Range</span>
+                              <span>₹ -- - ₹ --</span>
+                            </li>
+                          </ul>
+                        </div>
+                        
+                        <div>
+                          <h4 className="font-medium mb-2">Trading Information</h4>
+                          <ul className="space-y-2 text-sm">
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">Exchange</span>
+                              <span>BSE/NSE</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">Currency</span>
+                              <span>INR (₹)</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">Trading Hours</span>
+                              <span>9:15 AM - 3:30 PM IST</span>
+                            </li>
+                            <li className="flex justify-between">
+                              <span className="text-muted-foreground">ISIN</span>
+                              <span>--</span>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="financials">
+                    <Card className="p-6">
+                      <h3 className="text-xl font-semibold mb-4">Financial Information</h3>
+                      <p className="text-muted-foreground">
+                        Financial information for {stockData.name} would be displayed here,
+                        including income statements, balance sheets, and cash flow statements.
+                      </p>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="news">
+                    <Card className="p-6">
+                      <h3 className="text-xl font-semibold mb-4">Latest News</h3>
+                      <p className="text-muted-foreground">
+                        Recent news articles and updates about {stockData.name} would be displayed here.
+                      </p>
+                    </Card>
+                  </TabsContent>
+                </Tabs>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default StockView;

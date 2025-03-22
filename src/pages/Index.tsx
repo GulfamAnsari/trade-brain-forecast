@@ -1,29 +1,18 @@
 
-import { useEffect } from "react";
-import Navbar from "@/components/Navbar";
+import { useState } from "react";
+import CustomNavbar from "@/components/CustomNavbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Search, Star, LineChart } from "lucide-react";
-import { initializeTensorFlow } from "@/utils/ml";
-import { initializeConfig } from "@/utils/config";
 import FavoritesList from "@/components/FavoritesList";
-import { useState } from "react";
 import SearchModal from "@/components/SearchModal";
 
 const Index = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  useEffect(() => {
-    // Initialize TensorFlow.js
-    initializeTensorFlow();
-    
-    // Initialize app config
-    initializeConfig();
-  }, []);
-
   return (
     <div className="min-h-screen flex flex-col">
-      <Navbar />
+      <CustomNavbar />
       
       <main className="flex-1 container py-8">
         <div className="max-w-4xl mx-auto">

@@ -4,6 +4,7 @@ import { StockData, StockSearchResult } from "@/types/stock";
 import { getFromCache, saveToCache } from "./cache";
 import { getMockEnabled } from "./config";
 import { getMockStockData, getMockStockSearch } from "./mockData";
+import { searchIndianStocks } from "@/data/indianStocks";
 
 // AlphaVantage API key
 const API_KEY = "demo"; // Replace with your API key
@@ -19,6 +20,10 @@ export const searchStocks = async (query: string): Promise<StockSearchResult[]> 
       return getMockStockSearch(query);
     }
 
+    // Use hardcoded Indian stocks data instead of API
+    return searchIndianStocks(query);
+
+    /* Uncomment if you want to use the API instead
     const response = await fetch(
       `${BASE_URL}?function=SYMBOL_SEARCH&keywords=${query}&apikey=${API_KEY}`
     );
@@ -41,6 +46,7 @@ export const searchStocks = async (query: string): Promise<StockSearchResult[]> 
         currency: match["8. currency"],
       }));
     }
+    */
     
     return [];
   } catch (error) {

@@ -4,10 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { StockData, PredictionResult, ModelData } from "@/types/stock";
-import { trainModelWithWorker, predictWithWorker, evaluateModel } from "@/utils/ml";
+import { trainModelWithWorker, predictWithWorker } from "@/utils/ml";
 import { toast } from "sonner";
 import { BrainCircuit, LineChart, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -32,11 +31,11 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setProgressText("Initializing model...");
     
     try {
-      // Train model
+      // Train model with reduced complexity for better performance
       const trainedModel = await trainModelWithWorker(
         stockData,
         10, // sequence length
-        100, // epochs
+        50, // epochs - reduced from 100 to 50
         32, // batch size
         (progress) => {
           const percentComplete = Math.floor((progress.epoch / progress.totalEpochs) * 100);

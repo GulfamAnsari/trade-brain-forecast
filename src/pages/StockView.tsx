@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import Navbar from "@/components/Navbar";
+import CustomNavbar from "@/components/CustomNavbar";
 import StockChart from "@/components/StockChart";
 import StockDetails from "@/components/StockDetails";
 import PredictionButton from "@/components/PredictionButton";
@@ -59,7 +59,7 @@ const StockView = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Navbar />
+      <CustomNavbar />
       
       <main className="flex-1 container py-8">
         <div className="max-w-6xl mx-auto">

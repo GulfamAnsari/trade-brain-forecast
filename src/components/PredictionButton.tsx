@@ -7,6 +7,7 @@ import { StockData, PredictionResult, ModelData } from "@/types/stock";
 import { toast } from "sonner";
 import { BrainCircuit, LineChart, Loader2 } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
+import { trainModelWithWorker, predictWithWorker } from "@/utils/ml";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -28,81 +29,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [progressText, setProgressText] = useState("");
   const [modelData, setModelData] = useState<ModelData | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [worker, setWorker] = useState<Worker | null>(null);
   const [settings, setSettings] = useState(defaultSettings);
 
-  // Initialize worker
-  useEffect(() => {
-    // Create worker
-    const newWorker = new Worker('/src/workers/predictionWorker.js', { type: 'module' });
-    setWorker(newWorker);
-
-    // Set up message handler
-    newWorker.onmessage = (event) => {
-      const { type, error, id, ...data } = event.data;
-      
-      switch (type) {
-        case 'progress':
-          const percentComplete = Math.floor((data.epoch / data.totalEpochs) * 100);
-          setProgress(percentComplete);
-          setProgressText(`Training model: ${data.epoch}/${data.totalEpochs} epochs (Loss: ${data.loss.toFixed(4)})`);
-          break;
-          
-        case 'trained':
-          setModelData({
-            modelData: data.modelData,
-            min: data.min,
-            range: data.range,
-            history: data.history
-          });
-          setProgressText("Making predictions...");
-          break;
-          
-        case 'predicted':
-          setIsLoading(false);
-          onPredictionComplete(data.predictions);
-          toast.success("Prediction completed successfully");
-          break;
-          
-        case 'cleanup_complete':
-          console.log("Model memory cleaned up");
-          break;
-          
-        case 'error':
-          console.error("Prediction error:", error);
-          toast.error("Failed to make prediction. Please try again.");
-          setIsLoading(false);
-          break;
-      }
-    };
-
-    // Handle worker errors
-    newWorker.onerror = (error) => {
-      console.error("Worker error:", error);
-      toast.error("An error occurred with the prediction worker");
-      setIsLoading(false);
-    };
-
-    // Cleanup when component unmounts
-    return () => {
-      if (newWorker) {
-        newWorker.postMessage({ type: 'cleanup', id: Date.now().toString() });
-        newWorker.terminate();
-      }
-      if (abortController) {
-        abortController.abort();
-      }
-    };
-  }, [onPredictionComplete]);
-
+  // Handle running the prediction
   const handleRunPrediction = async () => {
     if (!stockData || stockData.timeSeries.length < 30) {
       toast.error("Not enough data to make predictions");
-      return;
-    }
-    
-    if (!worker) {
-      toast.error("Prediction worker not available");
       return;
     }
     
@@ -119,27 +51,47 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setProgress(0);
     setProgressText("Initializing model...");
     
-    // Generate a unique request ID
-    const requestId = Date.now().toString();
-    
     try {
-      // Start training the model
-      worker.postMessage({
-        type: 'train',
-        data: {
-          stockData,
-          sequenceLength: settings.sequenceLength,
-          epochs: settings.epochs,
-          batchSize: settings.batchSize,
-          signal: newAbortController.signal
+      // Train the model
+      const trainedModel = await trainModelWithWorker(
+        stockData,
+        settings.sequenceLength,
+        settings.epochs,
+        settings.batchSize,
+        (progress) => {
+          const percentComplete = Math.floor((progress.epoch / progress.totalEpochs) * 100);
+          setProgress(percentComplete);
+          setProgressText(`Training model: ${progress.epoch}/${progress.totalEpochs} epochs (Loss: ${progress.loss.toFixed(4)})`);
         },
-        id: requestId
-      });
+        newAbortController.signal
+      );
+      
+      setModelData(trainedModel);
+      setProgressText("Making predictions...");
+      
+      // Make predictions
+      const predictions = await predictWithWorker(
+        trainedModel.modelData,
+        stockData,
+        settings.sequenceLength,
+        trainedModel.min,
+        trainedModel.range,
+        settings.daysToPredict,
+        newAbortController.signal
+      );
+      
+      onPredictionComplete(predictions);
+      toast.success("Prediction completed successfully");
       
     } catch (error) {
-      console.error("Error starting prediction:", error);
+      console.error("Prediction error:", error);
+      if (error instanceof Error && error.message === 'Training was canceled') {
+        toast.info("Prediction was canceled");
+      } else {
+        toast.error("Failed to make prediction. Please try again.");
+      }
+    } finally {
       setIsLoading(false);
-      toast.error("Failed to start prediction. Please try again.");
     }
   };
 
@@ -148,25 +100,14 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setSettings(newSettings);
   };
 
-  // Handle predict stage after model training is done
+  // Clean up when component unmounts
   useEffect(() => {
-    if (modelData && isLoading && worker) {
-      const requestId = Date.now().toString();
-      worker.postMessage({
-        type: 'predict',
-        data: {
-          modelData: modelData.modelData,
-          stockData,
-          sequenceLength: settings.sequenceLength,
-          min: modelData.min,
-          range: modelData.range,
-          daysToPredict: settings.daysToPredict,
-          signal: abortController?.signal
-        },
-        id: requestId
-      });
-    }
-  }, [modelData, isLoading, worker, stockData, settings, abortController]);
+    return () => {
+      if (abortController) {
+        abortController.abort();
+      }
+    };
+  }, []);
 
   return (
     <Card className={className}>

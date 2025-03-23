@@ -1,5 +1,5 @@
 
-// Import TensorFlow.js
+// Import TensorFlow.js directly
 importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js');
 
 // Initialize worker state
@@ -26,9 +26,10 @@ self.addEventListener('message', async (event) => {
         throw new Error(`Unknown operation: ${type}`);
     }
   } catch (error) {
+    console.error('Worker error:', error);
     self.postMessage({
       type: 'error',
-      error: error.message,
+      error: error.message || 'Unknown error in worker',
       id: requestId
     });
   }
@@ -87,7 +88,7 @@ function preprocessData(data, sequenceLength) {
 
 // Function to train the model
 async function trainModel(data) {
-  const { stockData, sequenceLength, epochs, batchSize, signal } = data;
+  const { stockData, sequenceLength, epochs, batchSize } = data;
   
   try {
     // Calculate min and max values for normalization
@@ -148,11 +149,6 @@ async function trainModel(data) {
     
     // Train the model with batch processing
     for (let epoch = 0; epoch < epochs; epoch++) {
-      // Check if canceled
-      if (signal && signal.aborted) {
-        throw new Error('Training was canceled');
-      }
-      
       let batchLoss = 0;
       
       // Process in batches
@@ -211,6 +207,7 @@ async function trainModel(data) {
     tf.dispose([xsTensor, ysTensor, xsTrain, xsTest, ysTrain, ysTest, xsTrainReshaped, xsTestReshaped]);
     
   } catch (error) {
+    console.error('Error in trainModel:', error);
     // Clean up in case of error
     tf.disposeVariables();
     throw error;
@@ -219,7 +216,7 @@ async function trainModel(data) {
 
 // Function to make predictions
 async function makePredictions(data) {
-  const { modelData, stockData, sequenceLength, min, range, daysToPredict, signal } = data;
+  const { modelData, stockData, sequenceLength, min, range, daysToPredict } = data;
   
   try {
     // Load the model if needed
@@ -239,11 +236,6 @@ async function makePredictions(data) {
     const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
     
     for (let i = 0; i < daysToPredict; i++) {
-      // Check if canceled
-      if (signal && signal.aborted) {
-        throw new Error('Prediction was canceled');
-      }
-      
       // Reshape the sequence for prediction
       const inputTensor = tf.tensor2d([currentSequence], [1, sequenceLength]);
       const inputReshaped = inputTensor.reshape([1, sequenceLength, 1]);
@@ -286,6 +278,7 @@ async function makePredictions(data) {
     });
     
   } catch (error) {
+    console.error('Error in makePredictions:', error);
     // Clean up in case of error
     tf.disposeVariables();
     throw error;

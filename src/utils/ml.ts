@@ -41,68 +41,78 @@ export const trainModelWithWorker = (
   history: { loss: number[]; val_loss: number[] };
 }> => {
   return new Promise((resolve, reject) => {
-    // Use the existing worker file
-    const worker = new Worker('/src/workers/predictionWorker.js', { type: 'module' });
-    trainWorker = worker;
-    
-    // Generate a unique request ID
-    const requestId = Date.now().toString();
-    
-    // Set up message handler
-    worker.onmessage = (event) => {
-      const { type, error, id, ...data } = event.data;
-      
-      // Ignore messages from other requests
-      if (id !== requestId) return;
-      
-      if (type === 'progress') {
-        onProgress({
-          epoch: data.epoch,
-          totalEpochs: data.totalEpochs,
-          loss: data.loss
-        });
-      } else if (type === 'trained') {
-        resolve({
-          modelData: data.modelData,
-          min: data.min,
-          range: data.range,
-          history: data.history
-        });
-        worker.terminate();
-        trainWorker = null;
-      } else if (type === 'error') {
-        reject(new Error(error));
-        worker.terminate();
-        trainWorker = null;
+    try {
+      // Create a new worker or use the existing one
+      if (trainWorker) {
+        trainWorker.terminate();
       }
-    };
-    
-    // Handle worker errors
-    worker.onerror = (error) => {
+      
+      const worker = new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+      trainWorker = worker;
+      
+      // Generate a unique request ID
+      const requestId = Date.now().toString();
+      
+      // Set up message handler
+      worker.onmessage = (event) => {
+        const { type, error, id, ...data } = event.data;
+        
+        // Ignore messages from other requests
+        if (id !== requestId) return;
+        
+        if (type === 'progress') {
+          onProgress({
+            epoch: data.epoch,
+            totalEpochs: data.totalEpochs,
+            loss: data.loss
+          });
+        } else if (type === 'trained') {
+          resolve({
+            modelData: data.modelData,
+            min: data.min,
+            range: data.range,
+            history: data.history
+          });
+          worker.terminate();
+          trainWorker = null;
+        } else if (type === 'error') {
+          reject(new Error(error));
+          worker.terminate();
+          trainWorker = null;
+        }
+      };
+      
+      // Handle worker errors
+      worker.onerror = (error) => {
+        console.error("Worker error in trainModelWithWorker:", error);
+        reject(error);
+        worker.terminate();
+        trainWorker = null;
+      };
+      
+      // Handle abortion
+      signal.addEventListener('abort', () => {
+        reject(new Error('Training was canceled'));
+        worker.terminate();
+        trainWorker = null;
+      });
+      
+      // Start the training process
+      worker.postMessage({
+        type: 'train',
+        data: {
+          stockData,
+          sequenceLength,
+          epochs,
+          batchSize,
+          signal
+        },
+        id: requestId
+      });
+    } catch (error) {
+      console.error("Error creating worker in trainModelWithWorker:", error);
       reject(error);
-      worker.terminate();
-      trainWorker = null;
-    };
-    
-    // Handle abortion
-    signal.addEventListener('abort', () => {
-      reject(new Error('Training was canceled'));
-      worker.terminate();
-      trainWorker = null;
-    });
-    
-    // Start the training process
-    worker.postMessage({
-      type: 'train',
-      data: {
-        stockData,
-        sequenceLength,
-        epochs,
-        batchSize,
-        signal
-      },
-      id: requestId
-    });
+    }
   });
 };
 
@@ -117,59 +127,69 @@ export const predictWithWorker = (
   signal: AbortSignal
 ): Promise<PredictionResult[]> => {
   return new Promise((resolve, reject) => {
-    // Use the existing worker file
-    const worker = new Worker('/src/workers/predictionWorker.js', { type: 'module' });
-    predictWorker = worker;
-    
-    // Generate a unique request ID
-    const requestId = Date.now().toString();
-    
-    // Set up message handler
-    worker.onmessage = (event) => {
-      const { type, error, id, ...data } = event.data;
-      
-      // Ignore messages from other requests
-      if (id !== requestId) return;
-      
-      if (type === 'predicted') {
-        resolve(data.predictions);
-        worker.terminate();
-        predictWorker = null;
-      } else if (type === 'error') {
-        reject(new Error(error));
-        worker.terminate();
-        predictWorker = null;
+    try {
+      // Create a new worker or use the existing one
+      if (predictWorker) {
+        predictWorker.terminate();
       }
-    };
-    
-    // Handle worker errors
-    worker.onerror = (error) => {
+      
+      const worker = new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+      predictWorker = worker;
+      
+      // Generate a unique request ID
+      const requestId = Date.now().toString();
+      
+      // Set up message handler
+      worker.onmessage = (event) => {
+        const { type, error, id, ...data } = event.data;
+        
+        // Ignore messages from other requests
+        if (id !== requestId) return;
+        
+        if (type === 'predicted') {
+          resolve(data.predictions);
+          worker.terminate();
+          predictWorker = null;
+        } else if (type === 'error') {
+          reject(new Error(error));
+          worker.terminate();
+          predictWorker = null;
+        }
+      };
+      
+      // Handle worker errors
+      worker.onerror = (error) => {
+        console.error("Worker error in predictWithWorker:", error);
+        reject(error);
+        worker.terminate();
+        predictWorker = null;
+      };
+      
+      // Handle abortion
+      signal.addEventListener('abort', () => {
+        reject(new Error('Prediction was canceled'));
+        worker.terminate();
+        predictWorker = null;
+      });
+      
+      // Start the prediction process
+      worker.postMessage({
+        type: 'predict',
+        data: {
+          modelData,
+          stockData,
+          sequenceLength,
+          min,
+          range,
+          daysToPredict,
+          signal
+        },
+        id: requestId
+      });
+    } catch (error) {
+      console.error("Error creating worker in predictWithWorker:", error);
       reject(error);
-      worker.terminate();
-      predictWorker = null;
-    };
-    
-    // Handle abortion
-    signal.addEventListener('abort', () => {
-      reject(new Error('Prediction was canceled'));
-      worker.terminate();
-      predictWorker = null;
-    });
-    
-    // Start the prediction process
-    worker.postMessage({
-      type: 'predict',
-      data: {
-        modelData,
-        stockData,
-        sequenceLength,
-        min,
-        range,
-        daysToPredict,
-        signal
-      },
-      id: requestId
-    });
+    }
   });
 };
 

@@ -14,7 +14,11 @@ import FavoritesPage from "./pages/FavoritesPage";
 
 // Initialize app configuration on app load
 initializeConfig();
-initializeTensorFlow();
+
+// Initialize TensorFlow when app loads
+initializeTensorFlow().catch(err => {
+  console.error("Failed to initialize TensorFlow:", err);
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {

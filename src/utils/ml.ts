@@ -1,9 +1,30 @@
 
 import { StockData, PredictionResult } from "@/types/stock";
+import * as tf from '@tensorflow/tfjs';
 
 // Worker instances cache
 let trainWorker: Worker | null = null;
 let predictWorker: Worker | null = null;
+
+// Function to initialize TensorFlow
+export const initializeTensorFlow = async () => {
+  try {
+    // Enable WebGL backend for better performance
+    await tf.setBackend('webgl');
+    await tf.ready();
+    console.log('TensorFlow initialized with backend:', tf.getBackend());
+  } catch (error) {
+    console.error('Error initializing TensorFlow:', error);
+    // Fallback to CPU if WebGL fails
+    try {
+      await tf.setBackend('cpu');
+      await tf.ready();
+      console.log('TensorFlow fallback to CPU backend');
+    } catch (fallbackError) {
+      console.error('Failed to initialize TensorFlow:', fallbackError);
+    }
+  }
+};
 
 // Function to train a model with a worker
 export const trainModelWithWorker = (

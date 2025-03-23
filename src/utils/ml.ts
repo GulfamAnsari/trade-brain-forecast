@@ -29,7 +29,12 @@ export const initializeTensorFlow = async () => {
 // Create a worker with error handling
 const createWorker = () => {
   try {
-    return new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+    // Use a try-catch to handle worker initialization errors
+    const workerURL = new URL('../workers/predictionWorker.js', import.meta.url);
+    console.log("Creating worker with URL:", workerURL.toString());
+    
+    // Create worker and return it
+    return new Worker(workerURL, { type: 'module' });
   } catch (error) {
     console.error("Error creating worker:", error);
     throw new Error("Failed to initialize prediction worker");
@@ -86,6 +91,7 @@ export const trainModelWithWorker = (
           worker.terminate();
           trainWorker = null;
         } else if (type === 'error') {
+          console.error("Worker error:", error);
           reject(new Error(error));
           worker.terminate();
           trainWorker = null;
@@ -95,7 +101,10 @@ export const trainModelWithWorker = (
       // Handle worker errors
       worker.onerror = (error) => {
         console.error("Worker error in trainModelWithWorker:", error);
-        reject(new Error("Training worker encountered an error"));
+        console.error("Error message:", error.message);
+        console.error("Error filename:", error.filename);
+        console.error("Error lineno:", error.lineno);
+        reject(new Error("Training worker encountered an error: " + error.message));
         worker.terminate();
         trainWorker = null;
       };
@@ -121,17 +130,26 @@ export const trainModelWithWorker = (
         throw new Error(`Not enough data points for training. Need at least ${sequenceLength + 5}.`);
       }
       
+      // Make a deep copy of the stock data to avoid reference issues
+      const stockDataCopy = {
+        ...stockData,
+        timeSeries: [...stockData.timeSeries]
+      };
+      
       // Start the training process - don't pass the signal
       worker.postMessage({
         type: 'train',
         data: {
-          stockData,
+          stockData: stockDataCopy,
           sequenceLength,
           epochs,
           batchSize
         },
         id: requestId
       });
+      
+      // Log successful worker initialization
+      console.log("Training worker initialized successfully");
     } catch (error) {
       console.error("Error creating worker in trainModelWithWorker:", error);
       reject(error);
@@ -174,6 +192,7 @@ export const predictWithWorker = (
           worker.terminate();
           predictWorker = null;
         } else if (type === 'error') {
+          console.error("Worker prediction error:", error);
           reject(new Error(error));
           worker.terminate();
           predictWorker = null;
@@ -183,7 +202,10 @@ export const predictWithWorker = (
       // Handle worker errors
       worker.onerror = (error) => {
         console.error("Worker error in predictWithWorker:", error);
-        reject(new Error("Prediction worker encountered an error"));
+        console.error("Error message:", error.message);
+        console.error("Error filename:", error.filename);
+        console.error("Error lineno:", error.lineno);
+        reject(new Error("Prediction worker encountered an error: " + error.message));
         worker.terminate();
         predictWorker = null;
       };
@@ -213,12 +235,18 @@ export const predictWithWorker = (
         throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
       }
       
+      // Make a deep copy of the stock data to avoid reference issues
+      const stockDataCopy = {
+        ...stockData,
+        timeSeries: [...stockData.timeSeries]
+      };
+      
       // Start the prediction process - don't pass the signal
       worker.postMessage({
         type: 'predict',
         data: {
           modelData,
-          stockData,
+          stockData: stockDataCopy,
           sequenceLength,
           min,
           range,
@@ -226,6 +254,9 @@ export const predictWithWorker = (
         },
         id: requestId
       });
+      
+      // Log successful worker initialization
+      console.log("Prediction worker initialized successfully");
     } catch (error) {
       console.error("Error creating worker in predictWithWorker:", error);
       reject(error);

@@ -7,7 +7,7 @@ import { StockData, PredictionResult, ModelData } from "@/types/stock";
 import { toast } from "sonner";
 import { BrainCircuit, LineChart, Loader2 } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
-import { trainModelWithWorker, predictWithWorker } from "@/utils/ml";
+import { trainModelWithWorker, predictWithWorker, initializeTensorFlow } from "@/utils/ml";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -31,6 +31,21 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [settings, setSettings] = useState(defaultSettings);
 
+  // Initialize TensorFlow when component mounts
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        await initializeTensorFlow();
+        console.log("TensorFlow initialized in PredictionButton component");
+      } catch (error) {
+        console.error("Failed to initialize TensorFlow:", error);
+        toast.error("Failed to initialize ML framework");
+      }
+    };
+    
+    initialize();
+  }, []);
+
   // Handle running the prediction
   const handleRunPrediction = async () => {
     if (!stockData || stockData.timeSeries.length < settings.sequenceLength + 5) {
@@ -52,6 +67,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setProgressText("Initializing model...");
     
     try {
+      console.log("Starting prediction process for stock:", stockData.symbol);
+      
       // Train the model
       setProgressText("Preparing training data...");
       const trainedModel = await trainModelWithWorker(
@@ -70,6 +87,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       setModelData(trainedModel);
       setProgressText("Making predictions...");
       
+      console.log("Model trained successfully, making predictions");
+      
       // Make predictions
       const predictions = await predictWithWorker(
         trainedModel.modelData,
@@ -81,13 +100,15 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         newAbortController.signal
       );
       
+      console.log("Predictions generated successfully:", predictions.length);
+      
       onPredictionComplete(predictions);
       toast.success("Prediction completed successfully");
       
     } catch (error) {
       console.error("Prediction error:", error);
       if (error instanceof Error) {
-        if (error.message === 'Training was canceled' || error.message === 'Prediction was canceled') {
+        if (newAbortController.signal.aborted) {
           toast.info("Prediction was canceled");
         } else {
           toast.error(`Prediction failed: ${error.message}`);

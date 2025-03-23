@@ -30,15 +30,20 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [modelData, setModelData] = useState<ModelData | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [settings, setSettings] = useState(defaultSettings);
+  const [tfInitialized, setTfInitialized] = useState(false);
+  const [tfInitError, setTfInitError] = useState<string | null>(null);
 
   // Initialize TensorFlow when component mounts
   useEffect(() => {
     const initialize = async () => {
       try {
+        setTfInitError(null);
         await initializeTensorFlow();
         console.log("TensorFlow initialized in PredictionButton component");
+        setTfInitialized(true);
       } catch (error) {
         console.error("Failed to initialize TensorFlow:", error);
+        setTfInitError(error instanceof Error ? error.message : "Unknown error");
         toast.error("Failed to initialize ML framework");
       }
     };
@@ -48,6 +53,16 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
 
   // Handle running the prediction
   const handleRunPrediction = async () => {
+    // Check if TensorFlow is initialized
+    if (!tfInitialized) {
+      if (tfInitError) {
+        toast.error(`ML framework initialization failed: ${tfInitError}`);
+      } else {
+        toast.error("ML framework not initialized yet. Please try again in a moment.");
+      }
+      return;
+    }
+    
     if (!stockData || stockData.timeSeries.length < settings.sequenceLength + 5) {
       toast.error(`Not enough data to make predictions. Need at least ${settings.sequenceLength + 5} data points.`);
       return;
@@ -194,6 +209,15 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               <span className="font-medium">{settings.sequenceLength}</span>
             </div>
           </div>
+        ) : tfInitError ? (
+          <div className="space-y-2">
+            <p className="text-sm text-destructive">
+              ML framework initialization failed: {tfInitError}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              You may need to refresh the page or try a different browser.
+            </p>
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             Click the button below to run the prediction model. This may take a few moments.
@@ -204,7 +228,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         <Button 
           onClick={handleRunPrediction} 
           className="w-full"
-          disabled={isLoading}
+          disabled={isLoading || !!tfInitError}
         >
           {isLoading ? (
             <>

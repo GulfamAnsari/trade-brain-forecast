@@ -8,23 +8,11 @@ self.addEventListener('error', (e) => {
   });
 });
 
-// Import TensorFlow.js via CDN with error handling
-try {
-  importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js');
-  console.log("TensorFlow.js successfully loaded in worker");
-} catch (error) {
-  console.error("Failed to load TensorFlow.js in worker:", error);
-  self.postMessage({
-    type: 'error',
-    error: "Failed to load TensorFlow.js in worker: " + (error ? error.message : "Unknown error"),
-    id: self.requestId || 'unknown'
-  });
-}
-
 // Initialize worker state
 let model = null;
 let requestId = null;
 let isAborted = false; // Flag to track abort status
+let tf = null; // Store TensorFlow reference
 
 // Safe post message that handles errors
 function safePostMessage(message) {
@@ -45,6 +33,50 @@ function safePostMessage(message) {
   }
 }
 
+// Load TensorFlow.js
+function loadTensorFlow() {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log("Loading TensorFlow.js in worker...");
+      
+      // Import TensorFlow
+      importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js');
+      
+      // Verify it's loaded
+      if (typeof tf === 'undefined') {
+        throw new Error("TensorFlow didn't load properly - tf is undefined");
+      }
+      
+      // Store global reference
+      tf = self.tf;
+      
+      console.log("TensorFlow.js successfully loaded in worker");
+      resolve(tf);
+    } catch (error) {
+      console.error("Failed to load TensorFlow.js in worker:", error);
+      reject(new Error("Failed to load TensorFlow.js in worker: " + (error ? error.message : "Unknown error")));
+    }
+  });
+}
+
+// Initialize TensorFlow
+async function initTensorFlow() {
+  try {
+    // Load TensorFlow if not already loaded
+    if (!tf) {
+      tf = await loadTensorFlow();
+    }
+    
+    // Initialize backend
+    await tf.ready();
+    console.log("TensorFlow backend initialized:", tf.getBackend());
+    return tf;
+  } catch (error) {
+    console.error("TensorFlow initialization error:", error);
+    throw error;
+  }
+}
+
 // Listen for messages from the main thread
 self.addEventListener('message', async (event) => {
   const { type, data, id } = event.data;
@@ -58,6 +90,15 @@ self.addEventListener('message', async (event) => {
 
   try {
     console.log(`Worker received ${type} operation with id ${id}`);
+    
+    // Make sure TensorFlow is initialized before any operation
+    if (type === 'train' || type === 'predict') {
+      try {
+        await initTensorFlow();
+      } catch (error) {
+        throw new Error(`Failed to initialize TensorFlow: ${error.message}`);
+      }
+    }
     
     switch (type) {
       case 'train':
@@ -90,7 +131,9 @@ self.addEventListener('message', async (event) => {
       if (model) {
         model.dispose();
       }
-      tf.disposeVariables();
+      if (tf) {
+        tf.disposeVariables();
+      }
     } catch (cleanupError) {
       console.error("Error during cleanup after worker error:", cleanupError);
     }
@@ -112,9 +155,11 @@ function cleanup() {
       model.dispose();
       model = null;
       // Run garbage collection
-      tf.disposeVariables();
-      tf.engine().endScope();
-      tf.engine().startScope();
+      if (tf) {
+        tf.disposeVariables();
+        tf.engine().endScope();
+        tf.engine().startScope();
+      }
       
       safePostMessage({
         type: 'cleanup_complete',
@@ -132,7 +177,7 @@ function cleanup() {
 
 // Function to safely dispose tensors
 function safeTensorDispose(tensors) {
-  if (!tensors) return;
+  if (!tensors || !tf) return;
   
   if (Array.isArray(tensors)) {
     tensors.forEach(tensor => {
@@ -159,6 +204,11 @@ function preprocessData(data, sequenceLength) {
   let ysTensor = null;
   
   try {
+    // Ensure tf is defined
+    if (!tf) {
+      throw new Error("TensorFlow is not initialized");
+    }
+    
     const { timeSeries, min, range } = data;
     
     if (!timeSeries || !Array.isArray(timeSeries) || timeSeries.length === 0) {
@@ -221,6 +271,11 @@ async function trainModel(data) {
   const tensorsToDispose = [];
   
   try {
+    // Verify TensorFlow is available
+    if (!tf) {
+      throw new Error("TensorFlow is not initialized");
+    }
+    
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       throw new Error("Invalid stock data provided");
     }
@@ -432,7 +487,9 @@ async function trainModel(data) {
     
     // Run garbage collection
     try {
-      tf.disposeVariables();
+      if (tf) {
+        tf.disposeVariables();
+      }
     } catch (e) {
       console.error("Error during final cleanup:", e);
     }
@@ -447,6 +504,11 @@ async function makePredictions(data) {
   const tensorsToDispose = [];
   
   try {
+    // Verify TensorFlow is available
+    if (!tf) {
+      throw new Error("TensorFlow is not initialized");
+    }
+    
     if (!modelData) {
       throw new Error("Model data is missing");
     }
@@ -561,7 +623,9 @@ async function makePredictions(data) {
     
     // Run garbage collection
     try {
-      tf.disposeVariables();
+      if (tf) {
+        tf.disposeVariables();
+      }
     } catch (e) {
       console.error("Error during final cleanup:", e);
     }
@@ -570,3 +634,4 @@ async function makePredictions(data) {
 
 // Log successful worker initialization
 console.log("Prediction worker initialized successfully");
+

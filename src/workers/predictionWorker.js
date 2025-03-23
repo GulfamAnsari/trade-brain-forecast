@@ -5,11 +5,17 @@ importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.
 // Initialize worker state
 let model = null;
 let requestId = null;
+let isAborted = false; // Flag to track abort status
 
 // Listen for messages from the main thread
 self.addEventListener('message', async (event) => {
   const { type, data, id } = event.data;
   requestId = id;
+  
+  // Reset abort flag on new requests
+  if (type === 'train' || type === 'predict') {
+    isAborted = false;
+  }
 
   try {
     switch (type) {
@@ -21,6 +27,11 @@ self.addEventListener('message', async (event) => {
         break;
       case 'cleanup':
         cleanup();
+        break;
+      case 'abort':
+        // Set the abort flag
+        isAborted = true;
+        console.log('Worker received abort signal');
         break;
       default:
         throw new Error(`Unknown operation: ${type}`);
@@ -34,6 +45,13 @@ self.addEventListener('message', async (event) => {
     });
   }
 });
+
+// Check if operation has been aborted
+function checkAborted() {
+  if (isAborted) {
+    throw new Error('Operation was canceled');
+  }
+}
 
 // Clean up TensorFlow memory and models
 function cleanup() {
@@ -121,6 +139,9 @@ async function trainModel(data) {
       throw new Error("Not enough data for training");
     }
     
+    // Check if operation was aborted
+    checkAborted();
+    
     // Split the data into training and validation sets (80/20 split)
     const splitIdx = Math.floor(xsTensor.shape[0] * 0.8);
     
@@ -166,10 +187,18 @@ async function trainModel(data) {
     
     // Train the model with batch processing
     for (let epoch = 0; epoch < epochs; epoch++) {
+      // Check if operation was aborted between epochs
+      checkAborted();
+      
       let batchLoss = 0;
       
       // Process in batches
       for (let batchStart = 0; batchStart < xsTrainReshaped.shape[0]; batchStart += batchSize) {
+        // Check if operation was aborted within an epoch
+        if (batchStart % (batchSize * 3) === 0) { // Check every few batches
+          checkAborted();
+        }
+        
         const batchEnd = Math.min(batchStart + batchSize, xsTrainReshaped.shape[0]);
         const batchX = xsTrainReshaped.slice([batchStart, 0, 0], 
                                             [batchEnd - batchStart, sequenceLength, 1]);
@@ -204,6 +233,9 @@ async function trainModel(data) {
         id: requestId
       });
     }
+    
+    // Check if operation was aborted before completing
+    checkAborted();
     
     // Save the trained model
     const modelData = await model.save(tf.io.withSaveHandler(async modelArtifacts => {
@@ -244,6 +276,9 @@ async function makePredictions(data) {
       throw new Error("Not enough data points for prediction");
     }
     
+    // Check if operation was aborted
+    checkAborted();
+    
     // Load the model if needed
     if (!model) {
       try {
@@ -271,6 +306,9 @@ async function makePredictions(data) {
     const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
     
     for (let i = 0; i < daysToPredict; i++) {
+      // Check if operation was aborted during prediction
+      checkAborted();
+      
       // Reshape the sequence for prediction
       const inputTensor = tf.tensor2d([currentSequence], [1, sequenceLength]);
       const inputReshaped = inputTensor.reshape([1, sequenceLength, 1]);

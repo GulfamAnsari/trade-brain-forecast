@@ -100,27 +100,35 @@ export const trainModelWithWorker = (
         trainWorker = null;
       };
       
-      // Handle abortion
-      signal.addEventListener('abort', () => {
+      // Handle abortion - but don't pass the signal directly
+      const abortHandler = () => {
+        console.log("Training aborted by user");
+        // Notify worker about abortion
+        worker.postMessage({
+          type: 'abort',
+          id: requestId
+        });
         reject(new Error('Training was canceled'));
         worker.terminate();
         trainWorker = null;
-      });
+      };
+      
+      // Add abort listener
+      signal.addEventListener('abort', abortHandler);
       
       // Validate data before sending to worker
       if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + 5) {
         throw new Error(`Not enough data points for training. Need at least ${sequenceLength + 5}.`);
       }
       
-      // Start the training process
+      // Start the training process - don't pass the signal
       worker.postMessage({
         type: 'train',
         data: {
           stockData,
           sequenceLength,
           epochs,
-          batchSize,
-          signal
+          batchSize
         },
         id: requestId
       });
@@ -180,12 +188,21 @@ export const predictWithWorker = (
         predictWorker = null;
       };
       
-      // Handle abortion
-      signal.addEventListener('abort', () => {
+      // Handle abortion - but don't pass the signal directly
+      const abortHandler = () => {
+        console.log("Prediction aborted by user");
+        // Notify worker about abortion
+        worker.postMessage({
+          type: 'abort',
+          id: requestId
+        });
         reject(new Error('Prediction was canceled'));
         worker.terminate();
         predictWorker = null;
-      });
+      };
+      
+      // Add abort listener
+      signal.addEventListener('abort', abortHandler);
       
       // Validate data before sending to worker
       if (!modelData) {
@@ -196,7 +213,7 @@ export const predictWithWorker = (
         throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
       }
       
-      // Start the prediction process
+      // Start the prediction process - don't pass the signal
       worker.postMessage({
         type: 'predict',
         data: {
@@ -205,8 +222,7 @@ export const predictWithWorker = (
           sequenceLength,
           min,
           range,
-          daysToPredict,
-          signal
+          daysToPredict
         },
         id: requestId
       });

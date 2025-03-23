@@ -63,27 +63,32 @@ function cleanup() {
 
 // Function to preprocess the data
 function preprocessData(data, sequenceLength) {
-  const { timeSeries, min, range } = data;
-  
-  // Extract closing prices and normalize the data
-  const closingPrices = timeSeries.map(entry => (entry.close - min) / range);
-  
-  const xs = [];
-  const ys = [];
-  
-  // Create sequences
-  for (let i = 0; i < closingPrices.length - sequenceLength; i++) {
-    const sequence = closingPrices.slice(i, i + sequenceLength);
-    const target = closingPrices[i + sequenceLength];
-    xs.push(sequence);
-    ys.push(target);
+  try {
+    const { timeSeries, min, range } = data;
+    
+    // Extract closing prices and normalize the data
+    const closingPrices = timeSeries.map(entry => (entry.close - min) / range);
+    
+    const xs = [];
+    const ys = [];
+    
+    // Create sequences
+    for (let i = 0; i < closingPrices.length - sequenceLength; i++) {
+      const sequence = closingPrices.slice(i, i + sequenceLength);
+      const target = closingPrices[i + sequenceLength];
+      xs.push(sequence);
+      ys.push(target);
+    }
+    
+    // Convert to tensors
+    const xsTensor = tf.tensor2d(xs, [xs.length, sequenceLength]);
+    const ysTensor = tf.tensor1d(ys);
+    
+    return { xsTensor, ysTensor };
+  } catch (error) {
+    console.error("Error in preprocessData:", error);
+    throw new Error(`Data preprocessing failed: ${error.message}`);
   }
-  
-  // Convert to tensors
-  const xsTensor = tf.tensor2d(xs, [xs.length, sequenceLength]);
-  const ysTensor = tf.tensor1d(ys);
-  
-  return { xsTensor, ysTensor };
 }
 
 // Function to train the model
@@ -91,11 +96,19 @@ async function trainModel(data) {
   const { stockData, sequenceLength, epochs, batchSize } = data;
   
   try {
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
+      throw new Error("Invalid stock data provided");
+    }
+    
     // Calculate min and max values for normalization
     const closingPrices = stockData.timeSeries.map(entry => entry.close);
     const min = Math.min(...closingPrices);
     const max = Math.max(...closingPrices);
     const range = max - min;
+    
+    if (range === 0) {
+      throw new Error("Cannot normalize data: all closing prices are identical");
+    }
     
     // Preprocess the data
     const { xsTensor, ysTensor } = preprocessData({
@@ -103,6 +116,10 @@ async function trainModel(data) {
       min,
       range
     }, sequenceLength);
+    
+    if (xsTensor.shape[0] < 10) {
+      throw new Error("Not enough data for training");
+    }
     
     // Split the data into training and validation sets (80/20 split)
     const splitIdx = Math.floor(xsTensor.shape[0] * 0.8);
@@ -219,13 +236,31 @@ async function makePredictions(data) {
   const { modelData, stockData, sequenceLength, min, range, daysToPredict } = data;
   
   try {
+    if (!modelData) {
+      throw new Error("Model data is missing");
+    }
+    
+    if (!stockData || stockData.timeSeries.length < sequenceLength) {
+      throw new Error("Not enough data points for prediction");
+    }
+    
     // Load the model if needed
     if (!model) {
-      model = await tf.loadLayersModel(tf.io.fromMemory(modelData));
+      try {
+        model = await tf.loadLayersModel(tf.io.fromMemory(modelData));
+      } catch (err) {
+        console.error("Error loading model:", err);
+        throw new Error("Failed to load prediction model");
+      }
     }
     
     // Get the last sequence for prediction
     const closingPrices = stockData.timeSeries.map(entry => (entry.close - min) / range);
+    
+    if (closingPrices.length < sequenceLength) {
+      throw new Error(`Need at least ${sequenceLength} data points, but only got ${closingPrices.length}`);
+    }
+    
     const lastSequence = closingPrices.slice(-sequenceLength);
     
     // Make predictions for the specified number of days

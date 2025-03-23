@@ -26,6 +26,16 @@ export const initializeTensorFlow = async () => {
   }
 };
 
+// Create a worker with error handling
+const createWorker = () => {
+  try {
+    return new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+  } catch (error) {
+    console.error("Error creating worker:", error);
+    throw new Error("Failed to initialize prediction worker");
+  }
+};
+
 // Function to train a model with a worker
 export const trainModelWithWorker = (
   stockData: StockData,
@@ -47,7 +57,7 @@ export const trainModelWithWorker = (
         trainWorker.terminate();
       }
       
-      const worker = new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+      const worker = createWorker();
       trainWorker = worker;
       
       // Generate a unique request ID
@@ -85,7 +95,7 @@ export const trainModelWithWorker = (
       // Handle worker errors
       worker.onerror = (error) => {
         console.error("Worker error in trainModelWithWorker:", error);
-        reject(error);
+        reject(new Error("Training worker encountered an error"));
         worker.terminate();
         trainWorker = null;
       };
@@ -96,6 +106,11 @@ export const trainModelWithWorker = (
         worker.terminate();
         trainWorker = null;
       });
+      
+      // Validate data before sending to worker
+      if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + 5) {
+        throw new Error(`Not enough data points for training. Need at least ${sequenceLength + 5}.`);
+      }
       
       // Start the training process
       worker.postMessage({
@@ -133,7 +148,7 @@ export const predictWithWorker = (
         predictWorker.terminate();
       }
       
-      const worker = new Worker(new URL('../workers/predictionWorker.js', import.meta.url), { type: 'module' });
+      const worker = createWorker();
       predictWorker = worker;
       
       // Generate a unique request ID
@@ -160,7 +175,7 @@ export const predictWithWorker = (
       // Handle worker errors
       worker.onerror = (error) => {
         console.error("Worker error in predictWithWorker:", error);
-        reject(error);
+        reject(new Error("Prediction worker encountered an error"));
         worker.terminate();
         predictWorker = null;
       };
@@ -171,6 +186,15 @@ export const predictWithWorker = (
         worker.terminate();
         predictWorker = null;
       });
+      
+      // Validate data before sending to worker
+      if (!modelData) {
+        throw new Error("Model data is required for prediction");
+      }
+      
+      if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength) {
+        throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
+      }
       
       // Start the prediction process
       worker.postMessage({

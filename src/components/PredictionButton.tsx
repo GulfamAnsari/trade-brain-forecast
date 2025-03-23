@@ -33,8 +33,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
 
   // Handle running the prediction
   const handleRunPrediction = async () => {
-    if (!stockData || stockData.timeSeries.length < 30) {
-      toast.error("Not enough data to make predictions");
+    if (!stockData || stockData.timeSeries.length < settings.sequenceLength + 5) {
+      toast.error(`Not enough data to make predictions. Need at least ${settings.sequenceLength + 5} data points.`);
       return;
     }
     
@@ -53,6 +53,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     
     try {
       // Train the model
+      setProgressText("Preparing training data...");
       const trainedModel = await trainModelWithWorker(
         stockData,
         settings.sequenceLength,
@@ -85,8 +86,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       
     } catch (error) {
       console.error("Prediction error:", error);
-      if (error instanceof Error && error.message === 'Training was canceled') {
-        toast.info("Prediction was canceled");
+      if (error instanceof Error) {
+        if (error.message === 'Training was canceled' || error.message === 'Prediction was canceled') {
+          toast.info("Prediction was canceled");
+        } else {
+          toast.error(`Prediction failed: ${error.message}`);
+        }
       } else {
         toast.error("Failed to make prediction. Please try again.");
       }

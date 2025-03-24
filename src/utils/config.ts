@@ -4,13 +4,11 @@ const CONFIG_KEY = "app-config";
 
 // Default config
 const DEFAULT_CONFIG = {
-  useMockData: true,
   theme: "light" as const,
 };
 
 // Interface for the config
 interface AppConfig {
-  useMockData: boolean;
   theme: "light" | "dark";
 }
 
@@ -39,19 +37,6 @@ export const saveConfig = (config: AppConfig): void => {
   } catch (error) {
     console.error("Error saving config:", error);
   }
-};
-
-// Check if mock data is enabled
-export const getMockEnabled = (): boolean => {
-  return loadConfig().useMockData;
-};
-
-// Toggle mock data
-export const toggleMockData = (): boolean => {
-  const config = loadConfig();
-  config.useMockData = !config.useMockData;
-  saveConfig(config);
-  return config.useMockData;
 };
 
 // Get current theme

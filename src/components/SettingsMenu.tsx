@@ -9,22 +9,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
-import { toggleMockData, toggleTheme, getMockEnabled, getTheme } from "@/utils/config";
+import { toggleTheme, getTheme } from "@/utils/config";
 import { toast } from "sonner";
+import { clearCache } from "@/utils/cache";
 
 const SettingsMenu = () => {
-  const [mockEnabled, setMockEnabled] = useState(getMockEnabled());
   const [currentTheme, setCurrentTheme] = useState(getTheme());
-
-  const handleToggleMock = () => {
-    const newState = toggleMockData();
-    setMockEnabled(newState);
-    toast.success(`Mock data ${newState ? 'enabled' : 'disabled'}`);
-  };
 
   const handleToggleTheme = () => {
     const newTheme = toggleTheme();
     setCurrentTheme(newTheme);
+  };
+
+  const handleClearCache = () => {
+    clearCache();
+    toast.success("Cache cleared successfully");
   };
 
   return (
@@ -47,25 +46,6 @@ const SettingsMenu = () => {
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-1">
                 <label
-                  htmlFor="mock-toggle"
-                  className="text-sm font-medium leading-none"
-                >
-                  Use Mock Data
-                </label>
-                <span className="text-xs text-muted-foreground">
-                  Use predefined mock data instead of API calls
-                </span>
-              </div>
-              <Switch
-                id="mock-toggle"
-                checked={mockEnabled}
-                onCheckedChange={handleToggleMock}
-              />
-            </div>
-            
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col gap-1">
-                <label
                   htmlFor="theme-toggle"
                   className="text-sm font-medium leading-none"
                 >
@@ -80,6 +60,20 @@ const SettingsMenu = () => {
                 checked={currentTheme === "dark"}
                 onCheckedChange={handleToggleTheme}
               />
+            </div>
+            
+            <div className="pt-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+                onClick={handleClearCache}
+              >
+                Clear Stock Data Cache
+              </Button>
+              <p className="text-xs text-muted-foreground mt-1">
+                Note: Cache automatically expires after 24 hours
+              </p>
             </div>
           </div>
         </div>

@@ -16,11 +16,29 @@ interface Cache {
   [symbol: string]: CacheItem;
 }
 
-// Load cache from localStorage
+// Load cache from localStorage and clean expired items
 const loadCache = (): Cache => {
   try {
     const cacheStr = localStorage.getItem(CACHE_KEY);
-    return cacheStr ? JSON.parse(cacheStr) : {};
+    const cache = cacheStr ? JSON.parse(cacheStr) : {};
+    
+    // Clean expired cache entries
+    const now = Date.now();
+    let hasExpired = false;
+    
+    Object.keys(cache).forEach(symbol => {
+      if (now - cache[symbol].timestamp > CACHE_TTL) {
+        delete cache[symbol];
+        hasExpired = true;
+      }
+    });
+    
+    // Save cleaned cache if any items were removed
+    if (hasExpired) {
+      saveCache(cache);
+    }
+    
+    return cache;
   } catch (error) {
     console.error("Error loading cache:", error);
     return {};
@@ -74,4 +92,9 @@ export const clearCacheForSymbol = (symbol: string): void => {
     delete cache[symbol];
     saveCache(cache);
   }
+};
+
+// Check and clean expired cache items - this can be called periodically
+export const cleanExpiredCache = (): void => {
+  loadCache(); // This will clean expired items automatically
 };

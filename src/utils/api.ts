@@ -1,8 +1,7 @@
+
 import { toast } from "sonner";
 import { StockData, StockSearchResult } from "@/types/stock";
 import { getFromCache, saveToCache } from "./cache";
-import { getMockEnabled } from "./config";
-import { getMockStockData, getMockStockSearch } from "./mockData";
 import { getFromCache as getSearchFromCache, saveToCache as saveSearchToCache } from "./searchCache";
 
 // AlphaVantage API key
@@ -14,11 +13,6 @@ const BASE_URL = "https://www.alphavantage.co/query";
 // Function to search for stocks
 export const searchStocks = async (query: string): Promise<StockSearchResult[]> => {
   try {
-    // Check if mock is enabled
-    if (getMockEnabled()) {
-      return getMockStockSearch(query);
-    }
-
     // Check cache first
     const cachedResults = getSearchFromCache(query);
     if (cachedResults) {
@@ -72,13 +66,6 @@ export const getStockData = async (symbol: string): Promise<StockData | null> =>
     const cachedData = getFromCache(symbol);
     if (cachedData) {
       return cachedData;
-    }
-
-    // Check if mock is enabled
-    if (getMockEnabled()) {
-      const mockData = getMockStockData(symbol);
-      saveToCache(symbol, mockData);
-      return mockData;
     }
 
     const response = await fetch(

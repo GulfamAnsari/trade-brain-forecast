@@ -17,7 +17,7 @@ interface PredictionButtonProps {
 
 const defaultSettings = {
   daysToPredict: 30,
-  sequenceLength: 60,
+  sequenceLength: 360, // Default to 1 year (approximately 252 trading days)
   epochs: 100,
   batchSize: 16
 };
@@ -32,6 +32,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [serverConnected, setServerConnected] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [trainingStats, setTrainingStats] = useState<any | null>(null);
+  const [usingSavedModel, setUsingSavedModel] = useState(false);
 
   useEffect(() => {
     const initialize = async () => {
@@ -76,6 +77,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setProgress(0);
     setProgressText("Initializing analysis...");
     setTrainingStats(null);
+    setUsingSavedModel(false);
     
     try {
       const result = await analyzeStock(
@@ -85,7 +87,10 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         settings.batchSize,
         settings.daysToPredict,
         (progressData) => {
-          if (progressData.stage === 'training' && progressData.epoch !== undefined) {
+          if (progressData.stage === 'loading') {
+            setUsingSavedModel(true);
+            setProgressText(`${progressData.message || 'Loading saved model'}...`);
+          } else if (progressData.stage === 'training' && progressData.epoch !== undefined) {
             const percentComplete = Math.floor((progressData.epoch / progressData.totalEpochs) * 100);
             setProgress(percentComplete);
             setProgressText(`Training model: ${progressData.epoch}/${progressData.totalEpochs} epochs (Loss: ${progressData.loss?.toFixed(4)})`);
@@ -96,6 +101,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               loss: progressData.loss,
               val_loss: progressData.val_loss
             });
+          } else if (progressData.stage === 'saving') {
+            setProgressText(`${progressData.message || 'Saving model'}...`);
           } else {
             setProgressText(`${progressData.message || progressData.stage || 'Processing'}...`);
           }
@@ -105,7 +112,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       
       setModelData(result.modelData);
       onPredictionComplete(result.predictions);
-      toast.success("Analysis completed successfully");
+      
+      if (result.modelData.isExistingModel) {
+        toast.success("Analysis completed using saved model");
+      } else {
+        toast.success("Analysis completed and model saved for future use");
+      }
       
     } catch (error) {
       console.error("Analysis error:", error);
@@ -162,7 +174,11 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             <Progress value={progress} className="w-full h-2" />
             <p className="text-sm text-muted-foreground mt-2">{progressText}</p>
             
-            {trainingStats && (
+            {usingSavedModel ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                Using previously trained model. This will be much faster!
+              </p>
+            ) : trainingStats && (
               <div className="mt-3 space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span>Training loss:</span>
@@ -191,14 +207,22 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           </>
         ) : modelData ? (
           <div className="space-y-3">
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Final training loss:</span>
-              <span className="font-medium">{modelData.history.loss[modelData.history.loss.length - 1].toFixed(6)}</span>
-            </div>
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Final validation loss:</span>
-              <span className="font-medium">{modelData.history.val_loss[modelData.history.val_loss.length - 1].toFixed(6)}</span>
-            </div>
+            {modelData.isExistingModel ? (
+              <div className="text-sm text-muted-foreground mb-3 bg-muted/50 p-2 rounded">
+                Used saved model from previous training
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">Final training loss:</span>
+                  <span className="font-medium">{modelData.history?.loss[modelData.history.loss.length - 1]?.toFixed(6) || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">Final validation loss:</span>
+                  <span className="font-medium">{modelData.history?.val_loss[modelData.history.val_loss.length - 1]?.toFixed(6) || 'N/A'}</span>
+                </div>
+              </>
+            )}
             
             <div className="mt-4 text-sm font-medium">Model Parameters:</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
@@ -247,11 +271,11 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             <div className="text-sm font-medium">Current Parameters:</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Input Size:</span>
+                <span className="text-muted-foreground">Input Days:</span>
                 <span className="font-medium">{settings.sequenceLength}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Output Days:</span>
+                <span className="text-muted-foreground">Prediction Days:</span>
                 <span className="font-medium">{settings.daysToPredict}</span>
               </div>
               <div className="flex justify-between items-center">

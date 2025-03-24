@@ -18,7 +18,7 @@ const wss = new WebSocketServer({ server });
 // Middleware
 app.use(cors());
 app.use(morgan('dev'));
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' })); // Increase limit for large data transfers
 
 // Status endpoint
 app.get('/api/status', (req, res) => {

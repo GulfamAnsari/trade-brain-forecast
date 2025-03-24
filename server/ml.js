@@ -1,5 +1,5 @@
 
-const tf = require('@tensorflow/tfjs-node');
+import tf from '@tensorflow/tfjs-node';
 
 // Function to preprocess the data
 function preprocessData(data, sequenceLength) {
@@ -36,7 +36,7 @@ function preprocessData(data, sequenceLength) {
 }
 
 // Function to train the model
-async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgress) {
+export async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgress) {
   console.log("Training model with data:", 
     JSON.stringify({
       timeSeriesLength: stockData ? stockData.timeSeries.length : 0,
@@ -196,7 +196,7 @@ async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgre
 }
 
 // Function to make predictions
-async function predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict) {
+export async function predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict) {
   if (!modelData || !stockData || stockData.timeSeries.length < sequenceLength) {
     throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
   }
@@ -266,8 +266,3 @@ async function predictPrices(modelData, stockData, sequenceLength, min, range, d
   
   return predictions;
 }
-
-module.exports = {
-  trainModel,
-  predictPrices
-};

@@ -1,8 +1,7 @@
-
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const { trainModel, predictPrices } = require('./ml');
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import { trainModel, predictPrices } from './ml.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;

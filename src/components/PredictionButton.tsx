@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress";
 import { StockData, PredictionResult, ModelData } from "@/types/stock";
 import { toast } from "sonner";
-import { BrainCircuit, LineChart, Loader2 } from "lucide-react";
+import { BrainCircuit, LineChart, Loader2, ServerCrash } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
 import { trainModelWithWorker, predictWithWorker, initializeTensorFlow } from "@/utils/ml";
 
@@ -30,21 +30,21 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [modelData, setModelData] = useState<ModelData | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [settings, setSettings] = useState(defaultSettings);
-  const [tfInitialized, setTfInitialized] = useState(false);
-  const [tfInitError, setTfInitError] = useState<string | null>(null);
+  const [serverConnected, setServerConnected] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
-  // Initialize TensorFlow when component mounts
+  // Initialize connection to ML server when component mounts
   useEffect(() => {
     const initialize = async () => {
       try {
-        setTfInitError(null);
+        setServerError(null);
         await initializeTensorFlow();
-        console.log("TensorFlow initialized in PredictionButton component");
-        setTfInitialized(true);
+        console.log("Connected to ML server successfully");
+        setServerConnected(true);
       } catch (error) {
-        console.error("Failed to initialize TensorFlow:", error);
-        setTfInitError(error instanceof Error ? error.message : "Unknown error");
-        toast.error("Failed to initialize ML framework");
+        console.error("Failed to connect to ML server:", error);
+        setServerError(error instanceof Error ? error.message : "Unknown error");
+        toast.error("Failed to connect to ML server");
       }
     };
     
@@ -53,12 +53,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
 
   // Handle running the prediction
   const handleRunPrediction = async () => {
-    // Check if TensorFlow is initialized
-    if (!tfInitialized) {
-      if (tfInitError) {
-        toast.error(`ML framework initialization failed: ${tfInitError}`);
+    // Check if server is connected
+    if (!serverConnected) {
+      if (serverError) {
+        toast.error(`ML server connection failed: ${serverError}`);
       } else {
-        toast.error("ML framework not initialized yet. Please try again in a moment.");
+        toast.error("ML server not connected yet. Please try again in a moment.");
       }
       return;
     }
@@ -209,18 +209,27 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               <span className="font-medium">{settings.sequenceLength}</span>
             </div>
           </div>
-        ) : tfInitError ? (
+        ) : serverError ? (
           <div className="space-y-2">
-            <p className="text-sm text-destructive">
-              ML framework initialization failed: {tfInitError}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              You may need to refresh the page or try a different browser.
+            <div className="flex items-start gap-2">
+              <ServerCrash className="h-5 w-5 text-destructive mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-destructive">
+                  ML server connection failed
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {serverError}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Please make sure the ML server is running by starting it with:<br />
+              <code className="bg-muted p-1 rounded text-xs">cd server && npm install && npm start</code>
             </p>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Click the button below to run the prediction model. This may take a few moments.
+            Click the button below to run the prediction model. This uses a server-side ML model for better performance.
           </p>
         )}
       </CardContent>
@@ -228,7 +237,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         <Button 
           onClick={handleRunPrediction} 
           className="w-full"
-          disabled={isLoading || !!tfInitError}
+          disabled={isLoading || !!serverError}
         >
           {isLoading ? (
             <>

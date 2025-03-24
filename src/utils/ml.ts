@@ -1,48 +1,27 @@
-
 import { StockData, PredictionResult } from "@/types/stock";
-import * as tf from '@tensorflow/tfjs';
+import { toast } from "sonner";
 
-// Worker instances cache
-let trainWorker: Worker | null = null;
-let predictWorker: Worker | null = null;
+// Server URL - change this in production
+const SERVER_URL = "http://localhost:5000/api";
 
 // Function to initialize TensorFlow
 export const initializeTensorFlow = async () => {
   try {
-    // Enable WebGL backend for better performance
-    await tf.setBackend('webgl');
-    await tf.ready();
-    console.log('TensorFlow initialized with backend:', tf.getBackend());
-  } catch (error) {
-    console.error('Error initializing TensorFlow:', error);
-    // Fallback to CPU if WebGL fails
-    try {
-      await tf.setBackend('cpu');
-      await tf.ready();
-      console.log('TensorFlow fallback to CPU backend');
-    } catch (fallbackError) {
-      console.error('Failed to initialize TensorFlow:', fallbackError);
+    // Now this function just checks if the server is running
+    const response = await fetch(`${SERVER_URL}/status`);
+    if (!response.ok) {
+      throw new Error('ML server is not responding');
     }
-  }
-};
-
-// Create a worker with error handling
-const createWorker = () => {
-  try {
-    // Use a try-catch to handle worker initialization errors
-    const workerURL = new URL('../workers/predictionWorker.js', import.meta.url);
-    console.log("Creating worker with URL:", workerURL.toString());
-    
-    // Create worker and return it
-    return new Worker(workerURL, { type: 'module' });
+    console.log('ML server is running');
+    return true;
   } catch (error) {
-    console.error("Error creating worker:", error);
-    throw new Error("Failed to initialize prediction worker");
+    console.error('Error connecting to ML server:', error);
+    throw new Error('Unable to connect to ML server. Please ensure it is running.');
   }
 };
 
-// Function to train a model with a worker
-export const trainModelWithWorker = (
+// Function to train a model using the server API
+export const trainModelWithWorker = async (
   stockData: StockData,
   sequenceLength: number,
   epochs: number,
@@ -56,108 +35,78 @@ export const trainModelWithWorker = (
   history: { loss: number[]; val_loss: number[] };
 }> => {
   return new Promise((resolve, reject) => {
-    try {
-      // Create a new worker or use the existing one
-      if (trainWorker) {
-        trainWorker.terminate();
-      }
-      
-      const worker = createWorker();
-      trainWorker = worker;
-      
-      // Generate a unique request ID
-      const requestId = Date.now().toString();
-      
-      // Set up message handler
-      worker.onmessage = (event) => {
-        const { type, error, id, ...data } = event.data;
-        
-        // Ignore messages from other requests
-        if (id !== requestId) return;
-        
-        if (type === 'progress') {
-          onProgress({
-            epoch: data.epoch,
-            totalEpochs: data.totalEpochs,
-            loss: data.loss
-          });
-        } else if (type === 'trained') {
-          resolve({
-            modelData: data.modelData,
-            min: data.min,
-            range: data.range,
-            history: data.history
-          });
-          worker.terminate();
-          trainWorker = null;
-        } else if (type === 'error') {
-          console.error("Worker error:", error);
-          reject(new Error(error));
-          worker.terminate();
-          trainWorker = null;
-        }
-      };
-      
-      // Handle worker errors
-      worker.onerror = (error) => {
-        console.error("Worker error in trainModelWithWorker:", error);
-        console.error("Error message:", error.message);
-        console.error("Error filename:", error.filename);
-        console.error("Error lineno:", error.lineno);
-        reject(new Error("Training worker encountered an error: " + error.message));
-        worker.terminate();
-        trainWorker = null;
-      };
-      
-      // Handle abortion - but don't pass the signal directly
-      const abortHandler = () => {
-        console.log("Training aborted by user");
-        // Notify worker about abortion
-        worker.postMessage({
-          type: 'abort',
-          id: requestId
-        });
-        reject(new Error('Training was canceled'));
-        worker.terminate();
-        trainWorker = null;
-      };
-      
-      // Add abort listener
-      signal.addEventListener('abort', abortHandler);
-      
-      // Validate data before sending to worker
-      if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + 5) {
-        throw new Error(`Not enough data points for training. Need at least ${sequenceLength + 5}.`);
-      }
-      
-      // Make a deep copy of the stock data to avoid reference issues
-      const stockDataCopy = {
-        ...stockData,
-        timeSeries: [...stockData.timeSeries]
-      };
-      
-      // Start the training process - don't pass the signal
-      worker.postMessage({
-        type: 'train',
-        data: {
-          stockData: stockDataCopy,
-          sequenceLength,
-          epochs,
-          batchSize
-        },
-        id: requestId
-      });
-      
-      // Log successful worker initialization
-      console.log("Training worker initialized successfully");
-    } catch (error) {
-      console.error("Error creating worker in trainModelWithWorker:", error);
-      reject(error);
+    // Create a function to handle abortion
+    const abortHandler = () => {
+      reject(new Error('Training was canceled'));
+    };
+
+    // Add abort listener
+    signal.addEventListener('abort', abortHandler);
+
+    // Make a deep copy of the stock data to avoid reference issues
+    const stockDataCopy = {
+      ...stockData,
+      timeSeries: [...stockData.timeSeries]
+    };
+
+    // Validate data before sending to server
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + 5) {
+      reject(new Error(`Not enough data points for training. Need at least ${sequenceLength + 5}.`));
+      return;
     }
+
+    // Call the server API
+    fetch(`${SERVER_URL}/train`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stockData: stockDataCopy,
+        sequenceLength,
+        epochs,
+        batchSize
+      })
+    })
+    .then(response => {
+      if (!response.ok) {
+        return response.json().then(err => {
+          throw new Error(err.error || 'Server training failed');
+        });
+      }
+      return response.json();
+    })
+    .then(data => {
+      // Simulate progress since we don't have real-time updates yet
+      // In a production app, WebSockets would be used here
+      for (let i = 1; i <= epochs; i++) {
+        if (signal.aborted) break;
+        onProgress({
+          epoch: i,
+          totalEpochs: epochs,
+          loss: data.history.loss[Math.min(i-1, data.history.loss.length-1)]
+        });
+      }
+      
+      resolve({
+        modelData: data.modelData,
+        min: data.min,
+        range: data.range,
+        history: data.history
+      });
+    })
+    .catch(error => {
+      console.error("Error in trainModelWithWorker:", error);
+      reject(error);
+    })
+    .finally(() => {
+      // Remove abort listener
+      signal.removeEventListener('abort', abortHandler);
+    });
   });
 };
 
-// Function to make predictions with a worker
+// Function to make predictions using the server API
 export const predictWithWorker = (
   modelData: any,
   stockData: StockData,
@@ -168,111 +117,70 @@ export const predictWithWorker = (
   signal: AbortSignal
 ): Promise<PredictionResult[]> => {
   return new Promise((resolve, reject) => {
-    try {
-      // Create a new worker or use the existing one
-      if (predictWorker) {
-        predictWorker.terminate();
-      }
-      
-      const worker = createWorker();
-      predictWorker = worker;
-      
-      // Generate a unique request ID
-      const requestId = Date.now().toString();
-      
-      // Set up message handler
-      worker.onmessage = (event) => {
-        const { type, error, id, ...data } = event.data;
-        
-        // Ignore messages from other requests
-        if (id !== requestId) return;
-        
-        if (type === 'predicted') {
-          resolve(data.predictions);
-          worker.terminate();
-          predictWorker = null;
-        } else if (type === 'error') {
-          console.error("Worker prediction error:", error);
-          reject(new Error(error));
-          worker.terminate();
-          predictWorker = null;
-        }
-      };
-      
-      // Handle worker errors
-      worker.onerror = (error) => {
-        console.error("Worker error in predictWithWorker:", error);
-        console.error("Error message:", error.message);
-        console.error("Error filename:", error.filename);
-        console.error("Error lineno:", error.lineno);
-        reject(new Error("Prediction worker encountered an error: " + error.message));
-        worker.terminate();
-        predictWorker = null;
-      };
-      
-      // Handle abortion - but don't pass the signal directly
-      const abortHandler = () => {
-        console.log("Prediction aborted by user");
-        // Notify worker about abortion
-        worker.postMessage({
-          type: 'abort',
-          id: requestId
-        });
-        reject(new Error('Prediction was canceled'));
-        worker.terminate();
-        predictWorker = null;
-      };
-      
-      // Add abort listener
-      signal.addEventListener('abort', abortHandler);
-      
-      // Validate data before sending to worker
-      if (!modelData) {
-        throw new Error("Model data is required for prediction");
-      }
-      
-      if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength) {
-        throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
-      }
-      
-      // Make a deep copy of the stock data to avoid reference issues
-      const stockDataCopy = {
-        ...stockData,
-        timeSeries: [...stockData.timeSeries]
-      };
-      
-      // Start the prediction process - don't pass the signal
-      worker.postMessage({
-        type: 'predict',
-        data: {
-          modelData,
-          stockData: stockDataCopy,
-          sequenceLength,
-          min,
-          range,
-          daysToPredict
-        },
-        id: requestId
-      });
-      
-      // Log successful worker initialization
-      console.log("Prediction worker initialized successfully");
-    } catch (error) {
-      console.error("Error creating worker in predictWithWorker:", error);
-      reject(error);
+    // Create a function to handle abortion
+    const abortHandler = () => {
+      reject(new Error('Prediction was canceled'));
+    };
+
+    // Add abort listener
+    signal.addEventListener('abort', abortHandler);
+
+    // Make a deep copy of the stock data to avoid reference issues
+    const stockDataCopy = {
+      ...stockData,
+      timeSeries: [...stockData.timeSeries]
+    };
+
+    // Validate data before sending to server
+    if (!modelData) {
+      reject(new Error("Model data is required for prediction"));
+      return;
     }
+
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength) {
+      reject(new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`));
+      return;
+    }
+
+    // Call the server API
+    fetch(`${SERVER_URL}/predict`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        modelData,
+        stockData: stockDataCopy,
+        sequenceLength,
+        min,
+        range,
+        daysToPredict
+      })
+    })
+    .then(response => {
+      if (!response.ok) {
+        return response.json().then(err => {
+          throw new Error(err.error || 'Server prediction failed');
+        });
+      }
+      return response.json();
+    })
+    .then(data => {
+      resolve(data.predictions);
+    })
+    .catch(error => {
+      console.error("Error in predictWithWorker:", error);
+      reject(error);
+    })
+    .finally(() => {
+      // Remove abort listener
+      signal.removeEventListener('abort', abortHandler);
+    });
   });
 };
 
-// Function to clean up workers
+// Function to clean up workers (no longer needed with server approach)
 export const cleanupWorkers = () => {
-  if (trainWorker) {
-    trainWorker.terminate();
-    trainWorker = null;
-  }
-  
-  if (predictWorker) {
-    predictWorker.terminate();
-    predictWorker = null;
-  }
+  // No workers to clean up, but keeping the function for API compatibility
+  console.log("No workers to clean up in server-based approach");
 };

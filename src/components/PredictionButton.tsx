@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +14,6 @@ interface PredictionButtonProps {
   className?: string;
 }
 
-// Default prediction settings
 const defaultSettings = {
   daysToPredict: 5,
   sequenceLength: 7,
@@ -33,7 +31,6 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [serverConnected, setServerConnected] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  // Initialize connection to ML server when component mounts
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -51,9 +48,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     initialize();
   }, []);
 
-  // Handle running the prediction
   const handleRunPrediction = async () => {
-    // Check if server is connected
     if (!serverConnected) {
       if (serverError) {
         toast.error(`ML server connection failed: ${serverError}`);
@@ -68,29 +63,24 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       return;
     }
     
-    // Cancel any previous prediction
     if (abortController) {
       abortController.abort();
     }
     
-    // Create new abort controller
     const newAbortController = new AbortController();
     setAbortController(newAbortController);
     
     setIsLoading(true);
     setProgress(0);
-    setProgressText("Initializing model...");
+    setProgressText("Initializing analysis...");
     
     try {
-      console.log("Starting prediction process for stock:", stockData.symbol);
-      
-      // Train the model
-      setProgressText("Preparing training data...");
-      const trainedModel = await trainModelWithWorker(
+      const result = await analyzeStock(
         stockData,
         settings.sequenceLength,
         settings.epochs,
         settings.batchSize,
+        settings.daysToPredict,
         (progress) => {
           const percentComplete = Math.floor((progress.epoch / progress.totalEpochs) * 100);
           setProgress(percentComplete);
@@ -99,49 +89,30 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         newAbortController.signal
       );
       
-      setModelData(trainedModel);
-      setProgressText("Making predictions...");
-      
-      console.log("Model trained successfully, making predictions");
-      
-      // Make predictions
-      const predictions = await predictWithWorker(
-        trainedModel.modelData,
-        stockData,
-        settings.sequenceLength,
-        trainedModel.min,
-        trainedModel.range,
-        settings.daysToPredict,
-        newAbortController.signal
-      );
-      
-      console.log("Predictions generated successfully:", predictions.length);
-      
-      onPredictionComplete(predictions);
-      toast.success("Prediction completed successfully");
+      setModelData(result.modelData);
+      onPredictionComplete(result.predictions);
+      toast.success("Analysis completed successfully");
       
     } catch (error) {
-      console.error("Prediction error:", error);
+      console.error("Analysis error:", error);
       if (error instanceof Error) {
         if (newAbortController.signal.aborted) {
-          toast.info("Prediction was canceled");
+          toast.info("Analysis was canceled");
         } else {
-          toast.error(`Prediction failed: ${error.message}`);
+          toast.error(`Analysis failed: ${error.message}`);
         }
       } else {
-        toast.error("Failed to make prediction. Please try again.");
+        toast.error("Failed to analyze stock data. Please try again.");
       }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handle settings changes
   const handleSettingsChange = (newSettings: typeof settings) => {
     setSettings(newSettings);
   };
 
-  // Clean up when component unmounts
   useEffect(() => {
     return () => {
       if (abortController) {

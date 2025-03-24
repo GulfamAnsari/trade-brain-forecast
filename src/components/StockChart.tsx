@@ -1,5 +1,4 @@
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -33,7 +32,6 @@ interface StockChartProps {
   title?: string;
 }
 
-// Define the ChartDataPoint type to properly include the prediction property
 interface ChartDataPoint {
   date: string;
   price?: number;
@@ -60,18 +58,15 @@ const StockChart = ({
   title = "Price Chart" 
 }: StockChartProps) => {
   const [timeRange, setTimeRange] = useState<number>(30);
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
 
-  useEffect(() => {
-    if (!stockData || !stockData.timeSeries) return;
+  const chartData = useMemo(() => {
+    if (!stockData?.timeSeries) return [];
 
-    // Filter data based on selected time range
     const filteredData = timeRange === Infinity 
       ? [...stockData.timeSeries]
       : stockData.timeSeries.slice(-timeRange);
 
-    // Create chart data with predictions merged
     const formattedData: ChartDataPoint[] = filteredData.map(data => ({
       date: data.date,
       price: data.close,
@@ -81,12 +76,9 @@ const StockChart = ({
       volume: data.volume,
     }));
 
-    // Add prediction data if any and if we should show predictions
-    if (showPredictions && predictions && predictions.length > 0) {
-      // Create a map of all dates we already have
+    if (showPredictions && predictions.length > 0) {
       const existingDates = new Set(formattedData.map(d => d.date));
 
-      // Add prediction data that doesn't overlap with actual data
       predictions.forEach(pred => {
         if (!existingDates.has(pred.date)) {
           formattedData.push({
@@ -94,7 +86,6 @@ const StockChart = ({
             prediction: pred.prediction,
           });
         } else {
-          // For existing dates, add the prediction value
           const existingData = formattedData.find(d => d.date === pred.date);
           if (existingData) {
             existingData.prediction = pred.prediction;
@@ -103,15 +94,13 @@ const StockChart = ({
       });
     }
 
-    // Sort by date
-    formattedData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-    setChartData(formattedData);
+    return formattedData.sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
   }, [stockData, timeRange, predictions, showPredictions]);
 
-  // Calculate price change and percentage
-  const calculatePriceChange = () => {
-    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < 2) {
+  const priceChange = useMemo(() => {
+    if (!stockData?.timeSeries?.length) {
       return { change: 0, changePercent: 0 };
     }
 
@@ -129,12 +118,11 @@ const StockChart = ({
     const changePercent = (change / previousPrice) * 100;
 
     return { change, changePercent };
-  };
+  }, [stockData, timeRange]);
 
-  const { change, changePercent } = calculatePriceChange();
+  const { change, changePercent } = priceChange;
   const isPositive = change >= 0;
 
-  // Customize tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
@@ -160,7 +148,6 @@ const StockChart = ({
     return null;
   };
 
-  // Format date for x-axis
   const formatDate = (date: string) => {
     const d = new Date(date);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

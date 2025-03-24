@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -16,47 +17,38 @@ app.get('/api/status', (req, res) => {
   res.json({ status: 'Server is running' });
 });
 
-// Train model endpoint
-app.post('/api/train', async (req, res) => {
+// Combined train and predict endpoint
+app.post('/api/analyze', async (req, res) => {
   try {
-    const { stockData, sequenceLength, epochs, batchSize } = req.body;
+    const { stockData, sequenceLength, epochs, batchSize, daysToPredict } = req.body;
     
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
     }
     
-    // Start training in the background
-    const trainingPromise = trainModel(stockData, sequenceLength, epochs, batchSize, 
+    // Train the model
+    const modelData = await trainModel(stockData, sequenceLength, epochs, batchSize, 
       (progress) => {
-        // This is where we could implement WebSockets to send real-time progress
         console.log(`Training progress: Epoch ${progress.epoch}/${progress.totalEpochs}, Loss: ${progress.loss.toFixed(4)}`);
       });
     
-    // Wait for training to complete
-    const modelData = await trainingPromise;
+    // Make predictions
+    const predictions = await predictPrices(
+      modelData.modelData, 
+      stockData, 
+      sequenceLength, 
+      modelData.min, 
+      modelData.range, 
+      daysToPredict
+    );
     
-    res.json(modelData);
+    res.json({
+      modelData,
+      predictions
+    });
   } catch (error) {
-    console.error('Training error:', error);
-    res.status(500).json({ error: error.message || 'Failed to train model' });
-  }
-});
-
-// Predict endpoint
-app.post('/api/predict', async (req, res) => {
-  try {
-    const { modelData, stockData, sequenceLength, min, range, daysToPredict } = req.body;
-    
-    if (!modelData || !stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
-      return res.status(400).json({ error: 'Invalid data provided' });
-    }
-    
-    const predictions = await predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict);
-    
-    res.json({ predictions });
-  } catch (error) {
-    console.error('Prediction error:', error);
-    res.status(500).json({ error: error.message || 'Failed to make prediction' });
+    console.error('Analysis error:', error);
+    res.status(500).json({ error: error.message || 'Failed to analyze stock data' });
   }
 });
 

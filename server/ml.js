@@ -2,7 +2,7 @@
 import tf from '@tensorflow/tfjs-node';
 
 // Function to train and predict using the provided algorithm
-export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict) {
+export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress) {
   try {
     console.log("Training model with data:", 
       JSON.stringify({
@@ -30,6 +30,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     }
     
     console.log("Data range:", { minPrice, maxPrice, range });
+    onProgress({ stage: 'preprocessing', message: 'Normalizing data' });
     
     // Normalize prices
     const normalizedPrices = closingPrices.map(price => (price - minPrice) / range);
@@ -54,6 +55,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     }
     
     console.log(`Training on ${xs.length} samples.`);
+    onProgress({ stage: 'preparing', message: `Prepared ${xs.length} training samples` });
     
     // Convert to tensors
     const tensorXs = tf.tensor3d(xs, [xs.length, inputSize, 1]);
@@ -75,6 +77,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     });
     
     console.log("Training model...");
+    onProgress({ stage: 'training', message: 'Starting model training' });
     
     // Track history for reporting
     const history = {
@@ -93,6 +96,13 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           console.log(`Epoch ${epoch+1}/${epochs}: loss = ${logs.loss.toFixed(4)}, val_loss = ${logs.val_loss.toFixed(4)}`);
           history.loss.push(logs.loss);
           history.val_loss.push(logs.val_loss);
+          onProgress({ 
+            stage: 'training', 
+            epoch: epoch + 1, 
+            totalEpochs: epochs, 
+            loss: logs.loss, 
+            val_loss: logs.val_loss
+          });
         },
         ...tf.callbacks.earlyStopping({ monitor: "val_loss", patience: 5 })
       }
@@ -102,6 +112,8 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     tensorYs.dispose();
     
     console.log("Preparing data for prediction...");
+    onProgress({ stage: 'predicting', message: 'Generating predictions' });
+    
     const lastSequence = normalizedPrices.slice(-inputSize).map(v => [v]);
     const tensorInput = tf.tensor3d([lastSequence], [1, inputSize, 1]);
     
@@ -148,7 +160,13 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       modelData: {
         history,
         min: minPrice,
-        range: range
+        range: range,
+        params: {
+          inputSize,
+          outputSize,
+          epochs,
+          batchSize
+        }
       }
     };
     
@@ -156,17 +174,4 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     console.error("Training and prediction error:", error);
     throw error;
   }
-}
-
-// Maintains the old function signatures but uses the new implementation
-export async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgress) {
-  console.log("Delegating to trainAndPredict implementation");
-  // This function is kept for backward compatibility
-  return { modelData: null, min: 0, range: 0, history: { loss: [], val_loss: [] } };
-}
-
-export async function predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict) {
-  console.log("Delegating to trainAndPredict implementation");
-  // This function is kept for backward compatibility
-  return [];
 }

@@ -1,10 +1,11 @@
+
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { StockData, PredictionResult, ModelData } from "@/types/stock";
+import { StockData, PredictionResult } from "@/types/stock";
 import { toast } from "sonner";
-import { BrainCircuit, LineChart, Loader2, ServerCrash } from "lucide-react";
+import { BrainCircuit, LineChart, Loader2, ServerCrash, Settings } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
 import { analyzeStock, initializeTensorFlow } from "@/utils/ml";
 
@@ -15,21 +16,22 @@ interface PredictionButtonProps {
 }
 
 const defaultSettings = {
-  daysToPredict: 5,
-  sequenceLength: 7,
-  epochs: 30,
-  batchSize: 32
+  daysToPredict: 30,
+  sequenceLength: 60,
+  epochs: 100,
+  batchSize: 16
 };
 
 const PredictionButton = ({ stockData, onPredictionComplete, className }: PredictionButtonProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
-  const [modelData, setModelData] = useState<ModelData | null>(null);
+  const [modelData, setModelData] = useState<any | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [settings, setSettings] = useState(defaultSettings);
   const [serverConnected, setServerConnected] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [trainingStats, setTrainingStats] = useState<any | null>(null);
 
   useEffect(() => {
     const initialize = async () => {
@@ -73,6 +75,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setIsLoading(true);
     setProgress(0);
     setProgressText("Initializing analysis...");
+    setTrainingStats(null);
     
     try {
       const result = await analyzeStock(
@@ -81,10 +84,21 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         settings.epochs,
         settings.batchSize,
         settings.daysToPredict,
-        (progress) => {
-          const percentComplete = Math.floor((progress.epoch / progress.totalEpochs) * 100);
-          setProgress(percentComplete);
-          setProgressText(`Training model: ${progress.epoch}/${progress.totalEpochs} epochs (Loss: ${progress.loss.toFixed(4)})`);
+        (progressData) => {
+          if (progressData.stage === 'training' && progressData.epoch !== undefined) {
+            const percentComplete = Math.floor((progressData.epoch / progressData.totalEpochs) * 100);
+            setProgress(percentComplete);
+            setProgressText(`Training model: ${progressData.epoch}/${progressData.totalEpochs} epochs (Loss: ${progressData.loss?.toFixed(4)})`);
+            
+            setTrainingStats({
+              currentEpoch: progressData.epoch,
+              totalEpochs: progressData.totalEpochs,
+              loss: progressData.loss,
+              val_loss: progressData.val_loss
+            });
+          } else {
+            setProgressText(`${progressData.message || progressData.stage || 'Processing'}...`);
+          }
         },
         newAbortController.signal
       );
@@ -128,7 +142,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           <div>
             <CardTitle className="text-xl flex items-center gap-2">
               <BrainCircuit className="h-5 w-5 text-primary" />
-              Machine Learning Prediction
+              ML Prediction
             </CardTitle>
             <CardDescription>
               Generate price predictions using ML model
@@ -147,6 +161,20 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           <>
             <Progress value={progress} className="w-full h-2" />
             <p className="text-sm text-muted-foreground mt-2">{progressText}</p>
+            
+            {trainingStats && (
+              <div className="mt-3 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span>Training loss:</span>
+                  <span className="font-medium">{trainingStats.loss?.toFixed(6)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Validation loss:</span>
+                  <span className="font-medium">{trainingStats.val_loss?.toFixed(6)}</span>
+                </div>
+              </div>
+            )}
+            
             <Button 
               variant="outline" 
               size="sm" 
@@ -164,20 +192,32 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         ) : modelData ? (
           <div className="space-y-3">
             <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Training loss:</span>
-              <span className="font-medium">{modelData.history.loss[modelData.history.loss.length - 1].toFixed(4)}</span>
+              <span className="text-muted-foreground">Final training loss:</span>
+              <span className="font-medium">{modelData.history.loss[modelData.history.loss.length - 1].toFixed(6)}</span>
             </div>
             <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Validation loss:</span>
-              <span className="font-medium">{modelData.history.val_loss[modelData.history.val_loss.length - 1].toFixed(4)}</span>
+              <span className="text-muted-foreground">Final validation loss:</span>
+              <span className="font-medium">{modelData.history.val_loss[modelData.history.val_loss.length - 1].toFixed(6)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Prediction days:</span>
-              <span className="font-medium">{settings.daysToPredict}</span>
-            </div>
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Sequence length:</span>
-              <span className="font-medium">{settings.sequenceLength}</span>
+            
+            <div className="mt-4 text-sm font-medium">Model Parameters:</div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Input Size:</span>
+                <span className="font-medium">{settings.sequenceLength}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Output Days:</span>
+                <span className="font-medium">{settings.daysToPredict}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Epochs:</span>
+                <span className="font-medium">{settings.epochs}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Batch Size:</span>
+                <span className="font-medium">{settings.batchSize}</span>
+              </div>
             </div>
           </div>
         ) : serverError ? (
@@ -199,9 +239,36 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             </p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Click the button below to run the prediction model. This uses a server-side ML model for better performance.
-          </p>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Click the button below to run the prediction model.
+            </p>
+            
+            <div className="text-sm font-medium">Current Parameters:</div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Input Size:</span>
+                <span className="font-medium">{settings.sequenceLength}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Output Days:</span>
+                <span className="font-medium">{settings.daysToPredict}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Epochs:</span>
+                <span className="font-medium">{settings.epochs}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Batch Size:</span>
+                <span className="font-medium">{settings.batchSize}</span>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Settings className="h-3 w-3" />
+              <span>Click the gear icon in the top-right to adjust parameters</span>
+            </div>
+          </div>
         )}
       </CardContent>
       <CardFooter>

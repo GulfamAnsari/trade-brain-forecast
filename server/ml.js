@@ -11,6 +11,10 @@ if (!fs.existsSync(modelsDir)) {
 
 // Function to train and predict using the provided algorithm
 export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress) {
+  stockData?.timeSeries.sort((a, b) => {
+    return a.date - b.date;
+  });
+
   try {
     console.log("Training model with data:", 
       JSON.stringify({
@@ -60,8 +64,12 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     onProgress({ stage: 'preprocessing', message: 'Normalizing data' });
     
     // Normalize prices
-    const normalizedPrices = closingPrices.map(price => (price - minPrice) / range);
+    // const normalizedPrices = closingPrices.map(price => (price - minPrice) / range);
     
+    // 🔹 Normalize data between -1 and 1 (better for LSTMs)
+    const normalizedPrices = closingPrices.map(
+      (p) => (2 * (p - minPrice) / (maxPrice - minPrice)) - 1
+    );
     // Prepare training data
     const inputSize = sequenceLength;
     const outputSize = daysToPredict;
@@ -91,19 +99,48 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       const tensorYs = tf.tensor2d(ys, [ys.length, outputSize]);
       
       // Define the LSTM model
+      // model = tf.sequential();
+      // model.add(tf.layers.lstm({ 
+      //   units: 64, 
+      //   returnSequences: false, 
+      //   inputShape: [inputSize, 1] 
+      // }));
+
+
+      // Define the LSTM model
       model = tf.sequential();
+      // 🔹 First LSTM Layer (Extract patterns from stock prices)
+      model.add(tf.layers.lstm({ 
+        units: 128,   // Increased neurons for better learning
+        returnSequences: true,  // Enable return sequences for deeper learning
+        inputShape: [inputSize, 1]
+      }));
+      // 🔹 Second LSTM Layer (Refining patterns)
       model.add(tf.layers.lstm({ 
         units: 64, 
-        returnSequences: false, 
-        inputShape: [inputSize, 1] 
+        returnSequences: false 
       }));
-      model.add(tf.layers.dense({ units: 32, activation: "relu" }));
+      // 🔹 Dropout Layer (Prevents Overfitting)
+      model.add(tf.layers.dropout({ rate: 0.2 })); 
+      // 🔹 Dense Layer (Feature extraction)
+      model.add(tf.layers.dense({ units: 64, activation: "relu" }));
+      // 🔹 Batch Normalization (Improves stability)
+      model.add(tf.layers.batchNormalization());
+      // 🔹 Output Layer (Predicting next 7 days)
       model.add(tf.layers.dense({ units: outputSize }));
-      
+      // 🔹 Compile Model with Adam Optimizer and Lower Learning Rate
       model.compile({ 
-        optimizer: tf.train.adam(0.001), 
-        loss: "meanSquaredError" 
+        optimizer: tf.train.adam(0.0005),  // Lower learning rate for smoother learning
+        loss: "meanSquaredError"
       });
+
+      // model.add(tf.layers.dense({ units: 32, activation: "relu" }));
+      // model.add(tf.layers.dense({ units: outputSize }));
+      
+      // model.compile({ 
+      //   optimizer: tf.train.adam(0.001), 
+      //   loss: "meanSquaredError" 
+      // });
       
       console.log("Training model...");
       onProgress({ stage: 'training', message: 'Starting model training' });
@@ -119,7 +156,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
         epochs: epochs,
         batchSize: batchSize,
         verbose: 1,
-        validationSplit: 0.2,
+        validationSplit: 0.1,//before  validationSplit: 0.1
         callbacks: {
           onEpochEnd: (epoch, logs) => {
             console.log(`Epoch ${epoch+1}/${epochs}: loss = ${logs.loss.toFixed(4)}, val_loss = ${logs.val_loss.toFixed(4)}`);

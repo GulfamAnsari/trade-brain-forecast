@@ -18,8 +18,8 @@ interface PredictionButtonProps {
 const defaultSettings = {
   daysToPredict: 30,
   sequenceLength: 360, // Default to 1 year (approximately 252 trading days)
-  epochs: 100,
-  batchSize: 16
+  epochs: 1000,
+  batchSize: 64
 };
 
 const PredictionButton = ({ stockData, onPredictionComplete, className }: PredictionButtonProps) => {

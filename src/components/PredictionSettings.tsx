@@ -13,8 +13,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 // Define the form schema
 const PredictionSettingsSchema = z.object({
   daysToPredict: z.number().min(1).max(30),
-  sequenceLength: z.number().min(5).max(30),
-  epochs: z.number().min(10).max(200),
+  sequenceLength: z.number().min(5).max(365 * 3),
+  epochs: z.number().min(10).max(1000),
   batchSize: z.number().min(8).max(128),
 });
 
@@ -88,7 +88,7 @@ const PredictionSettings = ({ onSettingsChange, defaultSettings }: PredictionSet
                     <FormControl>
                       <Slider
                         min={5}
-                        max={30}
+                        max={365 * 3}
                         step={1}
                         defaultValue={[field.value]}
                         onValueChange={(vals) => field.onChange(vals[0])}
@@ -113,7 +113,7 @@ const PredictionSettings = ({ onSettingsChange, defaultSettings }: PredictionSet
                     <FormControl>
                       <Slider
                         min={10}
-                        max={200}
+                        max={1000}
                         step={10}
                         defaultValue={[field.value]}
                         onValueChange={(vals) => field.onChange(vals[0])}

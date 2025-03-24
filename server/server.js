@@ -2,7 +2,7 @@
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
-import { trainModel, predictPrices } from './ml.js';
+import { trainAndPredict } from './ml.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -26,25 +26,20 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ error: 'Invalid stock data provided' });
     }
     
-    // Train the model
-    const modelData = await trainModel(stockData, sequenceLength, epochs, batchSize, 
-      (progress) => {
-        console.log(`Training progress: Epoch ${progress.epoch}/${progress.totalEpochs}, Loss: ${progress.loss.toFixed(4)}`);
-      });
+    console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
     
-    // Make predictions
-    const predictions = await predictPrices(
-      modelData.modelData, 
+    // Train the model and get predictions
+    const result = await trainAndPredict(
       stockData, 
       sequenceLength, 
-      modelData.min, 
-      modelData.range, 
+      epochs, 
+      batchSize, 
       daysToPredict
     );
     
     res.json({
-      modelData,
-      predictions
+      modelData: result.modelData,
+      predictions: result.predictions
     });
   } catch (error) {
     console.error('Analysis error:', error);

@@ -6,7 +6,7 @@ import { StockData, PredictionResult, ModelData } from "@/types/stock";
 import { toast } from "sonner";
 import { BrainCircuit, LineChart, Loader2, ServerCrash } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
-import { trainModelWithWorker, predictWithWorker, initializeTensorFlow } from "@/utils/ml";
+import { analyzeStock, initializeTensorFlow } from "@/utils/ml";
 
 interface PredictionButtonProps {
   stockData: StockData;

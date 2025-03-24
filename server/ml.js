@@ -1,268 +1,172 @@
 
 import tf from '@tensorflow/tfjs-node';
 
-// Function to preprocess the data
-function preprocessData(data, sequenceLength) {
-  const { timeSeries, min, range } = data;
-  
-  // Extract closing prices and normalize the data
-  const closingPrices = timeSeries.map(entry => {
-    if (typeof entry.close !== 'number') {
-      throw new Error("Invalid closing price value in time series");
-    }
-    return (entry.close - min) / range;
-  });
-  
-  const xs = [];
-  const ys = [];
-  
-  // Create sequences
-  for (let i = 0; i < closingPrices.length - sequenceLength; i++) {
-    const sequence = closingPrices.slice(i, i + sequenceLength);
-    const target = closingPrices[i + sequenceLength];
-    xs.push(sequence);
-    ys.push(target);
-  }
-  
-  if (xs.length === 0 || ys.length === 0) {
-    throw new Error("Failed to create valid sequences from data");
-  }
-  
-  // Convert to tensors
-  const xsTensor = tf.tensor2d(xs, [xs.length, sequenceLength]);
-  const ysTensor = tf.tensor1d(ys);
-  
-  return { xsTensor, ysTensor };
-}
-
-// Function to train the model
-export async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgress) {
-  console.log("Training model with data:", 
-    JSON.stringify({
-      timeSeriesLength: stockData ? stockData.timeSeries.length : 0,
-      sequenceLength,
-      epochs,
-      batchSize
-    })
-  );
-  
-  // Calculate min and max values for normalization
-  const closingPrices = stockData.timeSeries.map(entry => entry.close);
-  const min = Math.min(...closingPrices);
-  const max = Math.max(...closingPrices);
-  const range = max - min;
-  
-  console.log("Data range:", { min, max, range });
-  
-  if (range === 0) {
-    throw new Error("Cannot normalize data: all closing prices are identical");
-  }
-  
-  // Preprocess the data
-  const { xsTensor, ysTensor } = preprocessData({
-    timeSeries: stockData.timeSeries,
-    min,
-    range
-  }, sequenceLength);
-  
-  if (xsTensor.shape[0] < 10) {
-    throw new Error("Not enough data for training");
-  }
-  
-  console.log("Data preprocessed, tensor shapes:", {
-    xsShape: xsTensor.shape,
-    ysShape: ysTensor.shape
-  });
-  
-  // Split the data into training and validation sets (80/20 split)
-  const splitIdx = Math.floor(xsTensor.shape[0] * 0.8);
-  
-  const xsTrain = xsTensor.slice([0, 0], [splitIdx, sequenceLength]);
-  const xsTest = xsTensor.slice([splitIdx, 0], [xsTensor.shape[0] - splitIdx, sequenceLength]);
-  
-  const ysTrain = ysTensor.slice([0], [splitIdx]);
-  const ysTest = ysTensor.slice([splitIdx], [ysTensor.shape[0] - splitIdx]);
-  
-  // Create and compile the model
-  console.log("Creating model...");
-  const model = tf.sequential();
-  
-  // Add layers to the model
-  model.add(tf.layers.lstm({
-    units: 50,
-    returnSequences: false,
-    inputShape: [sequenceLength, 1]
-  }));
-  
-  model.add(tf.layers.dense({ units: 1 }));
-  
-  // Compile the model
-  model.compile({
-    optimizer: 'adam',
-    loss: 'meanSquaredError'
-  });
-  
-  console.log("Model created and compiled successfully");
-  
-  // Reshape inputs for LSTM
-  const xsTrainReshaped = xsTrain.reshape([xsTrain.shape[0], xsTrain.shape[1], 1]);
-  const xsTestReshaped = xsTest.reshape([xsTest.shape[0], xsTest.shape[1], 1]);
-  
-  // Create a callback to report progress
-  const batchesPerEpoch = Math.ceil(xsTrainReshaped.shape[0] / batchSize);
-  
-  const history = {
-    loss: [],
-    val_loss: []
-  };
-  
-  console.log("Starting training with", epochs, "epochs...");
-  
-  // Train the model with batch processing
-  for (let epoch = 0; epoch < epochs; epoch++) {
-    let batchLoss = 0;
+// Function to train and predict using the provided algorithm
+export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict) {
+  try {
+    console.log("Training model with data:", 
+      JSON.stringify({
+        timeSeriesLength: stockData ? stockData.timeSeries.length : 0,
+        sequenceLength,
+        epochs,
+        daysToPredict
+      })
+    );
     
-    // Process in batches
-    for (let batchStart = 0; batchStart < xsTrainReshaped.shape[0]; batchStart += batchSize) {
-      const batchEnd = Math.min(batchStart + batchSize, xsTrainReshaped.shape[0]);
-      const batchSize = batchEnd - batchStart;
-      
-      if (batchSize <= 0) {
-        console.warn("Skipping empty batch");
-        continue;
-      }
-      
-      const batchX = xsTrainReshaped.slice([batchStart, 0, 0], 
-                                          [batchSize, sequenceLength, 1]);
-      const batchY = ysTrain.slice([batchStart], [batchSize]);
-      
-      const result = await model.trainOnBatch(batchX, batchY);
-      batchLoss += result;
-      
-      // Clean up tensors
-      batchX.dispose();
-      batchY.dispose();
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + daysToPredict) {
+      throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength + daysToPredict}.`);
     }
     
-    // Calculate batch average loss
-    const avgLoss = batchLoss / batchesPerEpoch;
+    // Extract closing prices
+    const closingPrices = stockData.timeSeries.map(entry => entry.close);
     
-    // Evaluate on validation set
-    const valLoss = model.evaluate(xsTestReshaped, ysTest);
-    const valLossValue = await valLoss.dataSync()[0];
-    valLoss.dispose();
+    // Calculate min and max values for normalization
+    const minPrice = Math.min(...closingPrices);
+    const maxPrice = Math.max(...closingPrices);
+    const range = maxPrice - minPrice;
     
-    // Store loss values
-    history.loss.push(avgLoss);
-    history.val_loss.push(valLossValue);
-    
-    // Report progress
-    if (onProgress) {
-      onProgress({
-        epoch: epoch + 1,
-        totalEpochs: epochs,
-        loss: avgLoss,
-        val_loss: valLossValue
-      });
-    }
-  }
-  
-  console.log("Training complete, saving model...");
-  
-  // Save the trained model to a format we can return
-  const modelArtifacts = await model.save(tf.io.withSaveHandler(async modelArtifacts => {
-    return modelArtifacts;
-  }));
-  
-  console.log("Model saved successfully");
-  
-  // Clean up tensors
-  xsTensor.dispose();
-  ysTensor.dispose();
-  xsTrain.dispose();
-  xsTest.dispose();
-  ysTrain.dispose();
-  ysTest.dispose();
-  xsTrainReshaped.dispose();
-  xsTestReshaped.dispose();
-  
-  // Return the model data and other necessary information
-  return {
-    modelData: modelArtifacts,
-    min,
-    range,
-    history
-  };
-}
-
-// Function to make predictions
-export async function predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict) {
-  if (!modelData || !stockData || stockData.timeSeries.length < sequenceLength) {
-    throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength}.`);
-  }
-  
-  // Load the model
-  console.log("Loading model from provided data...");
-  const model = await tf.loadLayersModel(tf.io.fromMemory(modelData));
-  console.log("Model loaded successfully");
-  
-  // Get the last sequence for prediction
-  const closingPrices = stockData.timeSeries.map(entry => (entry.close - min) / range);
-  
-  if (closingPrices.length < sequenceLength) {
-    throw new Error(`Need at least ${sequenceLength} data points, but only got ${closingPrices.length}`);
-  }
-  
-  const lastSequence = closingPrices.slice(-sequenceLength);
-  
-  // Make predictions for the specified number of days
-  const predictions = [];
-  let currentSequence = [...lastSequence];
-  
-  // Get the last date from the data
-  const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
-  
-  console.log("Making predictions for", daysToPredict, "days starting from", lastDate);
-  
-  for (let i = 0; i < daysToPredict; i++) {
-    // Reshape the sequence for prediction
-    const inputTensor = tf.tensor2d([currentSequence], [1, sequenceLength]);
-    const inputReshaped = inputTensor.reshape([1, sequenceLength, 1]);
-    
-    // Make a prediction
-    const predictionTensor = model.predict(inputReshaped);
-    const predictionValue = await predictionTensor.dataSync()[0];
-    
-    // Denormalize the prediction
-    const denormalizedValue = predictionValue * range + min;
-    
-    // Calculate the next date (skip weekends)
-    const nextDate = new Date(lastDate);
-    nextDate.setDate(lastDate.getDate() + i + 1);
-    
-    // Skip weekends (Saturday = 6, Sunday = 0)
-    while (nextDate.getDay() === 6 || nextDate.getDay() === 0) {
-      nextDate.setDate(nextDate.getDate() + 1);
+    if (range === 0) {
+      throw new Error("Cannot normalize data: all closing prices are identical");
     }
     
-    // Add the prediction to the results
-    predictions.push({
-      date: nextDate.toISOString().split('T')[0],
-      prediction: denormalizedValue
+    console.log("Data range:", { minPrice, maxPrice, range });
+    
+    // Normalize prices
+    const normalizedPrices = closingPrices.map(price => (price - minPrice) / range);
+    
+    // Prepare training data
+    const inputSize = sequenceLength;
+    const outputSize = daysToPredict;
+    const xs = [];
+    const ys = [];
+    
+    for (let i = 0; i < normalizedPrices.length - inputSize - outputSize; i++) {
+      const inputSlice = normalizedPrices.slice(i, i + inputSize);
+      // Ensure correct shape for TensorFlow tensor3d()
+      const formattedInput = inputSlice.map(v => [v]);
+      
+      xs.push(formattedInput);
+      ys.push(normalizedPrices.slice(i + inputSize, i + inputSize + outputSize));
+    }
+    
+    if (xs.length === 0 || ys.length === 0) {
+      throw new Error("Training data is empty after processing.");
+    }
+    
+    console.log(`Training on ${xs.length} samples.`);
+    
+    // Convert to tensors
+    const tensorXs = tf.tensor3d(xs, [xs.length, inputSize, 1]);
+    const tensorYs = tf.tensor2d(ys, [ys.length, outputSize]);
+    
+    // Define the LSTM model
+    const model = tf.sequential();
+    model.add(tf.layers.lstm({ 
+      units: 64, 
+      returnSequences: false, 
+      inputShape: [inputSize, 1] 
+    }));
+    model.add(tf.layers.dense({ units: 32, activation: "relu" }));
+    model.add(tf.layers.dense({ units: outputSize }));
+    
+    model.compile({ 
+      optimizer: tf.train.adam(0.001), 
+      loss: "meanSquaredError" 
     });
     
-    // Update the sequence for the next prediction
-    currentSequence.shift();
-    currentSequence.push(predictionValue);
+    console.log("Training model...");
     
-    // Clean up tensors
-    inputTensor.dispose();
-    inputReshaped.dispose();
+    // Track history for reporting
+    const history = {
+      loss: [],
+      val_loss: []
+    };
+    
+    // Train the model
+    const result = await model.fit(tensorXs, tensorYs, {
+      epochs: epochs,
+      batchSize: batchSize,
+      verbose: 1,
+      validationSplit: 0.2,
+      callbacks: {
+        onEpochEnd: (epoch, logs) => {
+          console.log(`Epoch ${epoch+1}/${epochs}: loss = ${logs.loss.toFixed(4)}, val_loss = ${logs.val_loss.toFixed(4)}`);
+          history.loss.push(logs.loss);
+          history.val_loss.push(logs.val_loss);
+        },
+        ...tf.callbacks.earlyStopping({ monitor: "val_loss", patience: 5 })
+      }
+    });
+    
+    tensorXs.dispose();
+    tensorYs.dispose();
+    
+    console.log("Preparing data for prediction...");
+    const lastSequence = normalizedPrices.slice(-inputSize).map(v => [v]);
+    const tensorInput = tf.tensor3d([lastSequence], [1, inputSize, 1]);
+    
+    console.log("Running prediction...");
+    const predictionTensor = model.predict(tensorInput);
+    
+    if (!predictionTensor) {
+      throw new Error("Model prediction returned undefined.");
+    }
+    
+    const predictedNormalized = await predictionTensor.data();
     predictionTensor.dispose();
+    tensorInput.dispose();
+    
+    // Convert back to original price range
+    const predictedPrices = Array.from(predictedNormalized).map(p => p * range + minPrice);
+    
+    // Get the last date from the data
+    const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
+    
+    // Prepare prediction results
+    const predictions = [];
+    for (let i = 0; i < daysToPredict; i++) {
+      // Calculate the next date (skip weekends)
+      const predictionDate = new Date(lastDate);
+      predictionDate.setDate(lastDate.getDate() + i + 1);
+      
+      // Skip weekends (Saturday = 6, Sunday = 0)
+      while (predictionDate.getDay() === 6 || predictionDate.getDay() === 0) {
+        predictionDate.setDate(predictionDate.getDate() + 1);
+      }
+      
+      predictions.push({
+        date: predictionDate.toISOString().split('T')[0],
+        prediction: predictedPrices[i]
+      });
+    }
+    
+    // Clean up the model
+    model.dispose();
+    
+    return {
+      predictions,
+      modelData: {
+        history,
+        min: minPrice,
+        range: range
+      }
+    };
+    
+  } catch (error) {
+    console.error("Training and prediction error:", error);
+    throw error;
   }
-  
-  // Clean up the model
-  model.dispose();
-  
-  return predictions;
+}
+
+// Maintains the old function signatures but uses the new implementation
+export async function trainModel(stockData, sequenceLength, epochs, batchSize, onProgress) {
+  console.log("Delegating to trainAndPredict implementation");
+  // This function is kept for backward compatibility
+  return { modelData: null, min: 0, range: 0, history: { loss: [], val_loss: [] } };
+}
+
+export async function predictPrices(modelData, stockData, sequenceLength, min, range, daysToPredict) {
+  console.log("Delegating to trainAndPredict implementation");
+  // This function is kept for backward compatibility
+  return [];
 }

@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,7 +81,6 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
 
   const handleRemoveModel = (id: string) => {
     if (models.length > 1) {
-      // Cancel any ongoing training for this model
       const modelToRemove = models.find(m => m.id === id);
       if (modelToRemove?.abortController) {
         modelToRemove.abortController.abort();
@@ -102,10 +100,8 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   const handleTrainAll = async () => {
     setTrainingComplete(false);
     
-    // Create a queue of all models to train
     const trainingQueue = [...models];
     
-    // Set all models to pending state
     setModels(models.map(model => ({
       ...model,
       status: "pending",
@@ -113,23 +109,18 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       message: "Waiting to start..."
     })));
     
-    // How many models to train concurrently
     const maxConcurrent = 2;
     const activeTrainings: Promise<void>[] = [];
     const activeModelIds: string[] = [];
     
-    // Process the queue
     while (trainingQueue.length > 0 || activeTrainings.length > 0) {
-      // Fill up active trainings
       while (trainingQueue.length > 0 && activeTrainings.length < maxConcurrent) {
         const modelToTrain = trainingQueue.shift();
         if (modelToTrain) {
           activeModelIds.push(modelToTrain.id);
           setCurrentlyTraining([...activeModelIds]);
           
-          // Start training this model
           const trainingPromise = trainModel(modelToTrain).finally(() => {
-            // Remove from active trainings when done
             const index = activeModelIds.indexOf(modelToTrain.id);
             if (index !== -1) {
               activeModelIds.splice(index, 1);
@@ -141,15 +132,11 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         }
       }
       
-      // Wait for at least one training to complete
-      if (activeTrainings.length > 0) {
-        await Promise.race(activeTrainings.map((p, i) => p.then(() => i)));
-        
-        // Filter out completed trainings
-        const newActiveTrainings = activeTrainings.filter(p => !p.isResolved);
-        activeTrainings.length = 0;
-        activeTrainings.push(...newActiveTrainings);
-      }
+      const completedIndex = await Promise.race(
+        activeTrainings.map((p, i) => p.then(() => i))
+      );
+      
+      activeTrainings.splice(completedIndex, 1);
     }
     
     setTrainingComplete(true);
@@ -158,18 +145,15 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
 
   const trainModel = async (model: ModelConfig): Promise<void> => {
     try {
-      // Update the model status to training
       updateModelConfig(model.id, { 
         status: "training", 
         progress: 5,
         message: "Starting training..." 
       });
       
-      // Create an abort controller
       const abortController = new AbortController();
       updateModelConfig(model.id, { abortController });
       
-      // Start the training process
       const result = await analyzeStock(
         stockData,
         model.sequenceLength,
@@ -177,7 +161,6 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         model.batchSize,
         model.daysToPredict,
         (progressData) => {
-          // Update progress for this model
           const newProgress = progressData.percent || 0;
           const message = progressData.message || progressData.stage || "Processing...";
           
@@ -189,21 +172,18 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         abortController.signal
       );
       
-      // Training completed successfully
       updateModelConfig(model.id, { 
         status: "complete", 
         progress: 100,
         message: "Training complete"
       });
       
-      // If this is the last model to be trained, use its predictions for display
       if (currentlyTraining.length <= 1 && currentlyTraining[0] === model.id) {
         onPredictionComplete(result.predictions);
       }
     } catch (error) {
       console.error(`Training error for model ${model.id}:`, error);
       
-      // Check if it was aborted
       if (error instanceof Error && error.name === "AbortError") {
         updateModelConfig(model.id, { 
           status: "pending", 
@@ -211,7 +191,6 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
           message: "Training cancelled" 
         });
       } else {
-        // Handle other errors
         updateModelConfig(model.id, { 
           status: "error", 
           progress: 0,

@@ -288,9 +288,9 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     });
 
     // Prepare for prediction - use the last available window
-    const windowSize = model.inputs[0].shape[1];
-    const inputWindow = normalizedPrices.slice(-windowSize).map(v => [v]);
-    const tensorInput = tf.tensor3d([inputWindow], [1, windowSize, 1]);
+    const inputWindowSize = model.inputs[0].shape[1];
+    const inputWindow = normalizedPrices.slice(-inputWindowSize).map(v => [v]);
+    const tensorInput = tf.tensor3d([inputWindow], [1, inputWindowSize, 1]);
 
     const predictionTensor = model.predict(tensorInput);
     if (!predictionTensor) {

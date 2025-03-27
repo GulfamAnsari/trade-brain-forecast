@@ -34,6 +34,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [trainingStats, setTrainingStats] = useState<any | null>(null);
   const [usingSavedModel, setUsingSavedModel] = useState(false);
   const [dataPoints, setDataPoints] = useState<number | null>(null);
+  const [modelId, setModelId] = useState<string | null>(null);
 
   useEffect(() => {
     const initialize = async () => {
@@ -80,6 +81,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setTrainingStats(null);
     setUsingSavedModel(false);
     setDataPoints(null);
+    setModelId(null);
     
     try {
       const result = await analyzeStock(
@@ -98,27 +100,43 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           } else if (progressData.stage === 'loading') {
             setUsingSavedModel(true);
             setProgressText(`${progressData.message || 'Loading saved model'}...`);
-          } else if (progressData.stage === 'training' && progressData.epoch !== undefined) {
-            setProgressText(`Training model: ${progressData.epoch}/${progressData.totalEpochs} epochs`);
+            
+            if (progressData.modelInfo) {
+              setTrainingStats({
+                ...trainingStats,
+                ...progressData.modelInfo
+              });
+            }
+          } else if (progressData.stage === 'training') {
+            setProgressText(`Training model: ${progressData.epoch || 0}/${progressData.totalEpochs || settings.epochs} epochs`);
             
             setTrainingStats({
               currentEpoch: progressData.epoch,
-              totalEpochs: progressData.totalEpochs,
+              totalEpochs: progressData.totalEpochs || settings.epochs,
               loss: progressData.loss,
               val_loss: progressData.val_loss
             });
           } else if (progressData.stage === 'saved' && progressData.history) {
             setTrainingStats({
               ...trainingStats,
-              history: progressData.history
+              history: progressData.history,
+              ...progressData.modelInfo
             });
             setProgressText(`${progressData.message || 'Model saved'}...`);
+            
+            if (progressData.modelId) {
+              setModelId(progressData.modelId);
+            }
           } else {
             setProgressText(`${progressData.message || progressData.stage || 'Processing'}...`);
           }
           
           if (progressData.dataPoints) {
             setDataPoints(progressData.dataPoints);
+          }
+          
+          if (progressData.modelId) {
+            setModelId(progressData.modelId);
           }
         },
         newAbortController.signal
@@ -203,17 +221,17 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
                 <div className="flex justify-between">
                   <span>Training progress:</span>
                   <span className="font-medium">
-                    {trainingStats.currentEpoch}/{trainingStats.totalEpochs} epochs
+                    {trainingStats.currentEpoch || 0}/{trainingStats.totalEpochs || settings.epochs} epochs
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Training loss:</span>
-                  <span className="font-medium">{trainingStats.loss?.toFixed(6)}</span>
+                  <span className="font-medium">{trainingStats.loss?.toFixed(6) || 'N/A'}</span>
                 </div>
                 {trainingStats.val_loss && (
                   <div className="flex justify-between">
                     <span>Validation loss:</span>
-                    <span className="font-medium">{trainingStats.val_loss?.toFixed(6)}</span>
+                    <span className="font-medium">{trainingStats.val_loss?.toFixed(6) || 'N/A'}</span>
                   </div>
                 )}
               </div>
@@ -237,7 +255,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           <div className="space-y-3">
             {modelData.isExistingModel ? (
               <div className="text-sm text-muted-foreground mb-3 bg-muted/50 p-2 rounded">
-                Used saved model from previous training
+                Used saved model from previous training {modelData.modelId && `(${modelData.modelId})`}
               </div>
             ) : (
               <>
@@ -272,21 +290,27 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Output Days:</span>
-                <span className="font-medium">{settings.daysToPredict}</span>
+                <span className="font-medium">{modelData.params?.outputSize || settings.daysToPredict}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Epochs:</span>
-                <span className="font-medium">{settings.epochs}</span>
+                <span className="font-medium">{modelData.params?.totalEpochs || modelData.params?.epochs || settings.epochs}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Batch Size:</span>
-                <span className="font-medium">{settings.batchSize}</span>
+                <span className="font-medium">{modelData.params?.batchSize || settings.batchSize}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Window Size:</span>
                 <span className="font-medium">{modelData.params?.inputSize || 'Unknown'}</span>
               </div>
             </div>
+            
+            {modelId && (
+              <div className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                Model ID: {modelId}
+              </div>
+            )}
           </div>
         ) : serverError ? (
           <div className="space-y-2">
@@ -357,12 +381,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           ) : modelData ? (
             <>
               <LineChart className="mr-2 h-4 w-4" />
-              Run Prediction Again
+              Train New Model
             </>
           ) : (
             <>
               <LineChart className="mr-2 h-4 w-4" />
-              Run Prediction
+              Train & Predict
             </>
           )}
         </Button>

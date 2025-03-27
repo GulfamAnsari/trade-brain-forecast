@@ -32,7 +32,8 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     onProgress({ 
       stage: "data", 
       message: `Using ${trimmedData.length} data points for analysis`, 
-      percent: 10 
+      percent: 10,
+      dataPoints: trimmedData.length
     });
 
     const modelKey = `${stockData.symbol}_${sequenceLength}_${daysToPredict}`;
@@ -60,7 +61,9 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
             modelInfo: {
               inputSize: params.inputSize,
               outputSize: params.outputSize,
-              saved: true
+              saved: true,
+              epochs: params.epochs,
+              batchSize: params.batchSize
             }
           });
         }
@@ -150,7 +153,10 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
         modelInfo: {
           layers: [64, 64, 32, daysToPredict],
           inputSize: windowSize,
-          outputSize: daysToPredict
+          outputSize: daysToPredict,
+          epochs: epochs,
+          totalEpochs: epochs,
+          batchSize: batchSize
         }
       });
 
@@ -189,7 +195,9 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           inputSize: windowSize,
           outputSize: daysToPredict,
           batchSize,
-          epochs
+          epochs,
+          totalEpochs: epochs,
+          trainingTime: new Date().toISOString()
         };
         
         fs.writeFileSync(
@@ -202,9 +210,18 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           stage: "saved", 
           message: "Model saved successfully", 
           percent: 90,
+          modelId: modelKey,
           history: {
             loss: history.history.loss,
             val_loss: history.history.val_loss
+          },
+          modelInfo: {
+            inputSize: windowSize,
+            outputSize: daysToPredict,
+            epochs: epochs,
+            totalEpochs: epochs,
+            batchSize: batchSize,
+            created: new Date().toISOString()
           }
         });
       } catch (saveError) {
@@ -268,12 +285,14 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       stage: "completed", 
       message: "Prediction complete!", 
       percent: 100,
-      dataPoints: trimmedData.length
+      dataPoints: trimmedData.length,
+      modelId: modelKey
     });
 
     return {
       predictions,
       modelData: {
+        modelId: modelKey,
         isExistingModel: !shouldTrain,
         min: minPrice,
         range: range,
@@ -282,6 +301,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           inputSize: windowSize || model.inputs[0].shape[1], 
           outputSize: daysToPredict, 
           epochs, 
+          totalEpochs: epochs,
           batchSize 
         }
       }

@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
@@ -5,9 +6,10 @@ import StockChart from "@/components/StockChart";
 import StockDetails from "@/components/StockDetails";
 import PredictionButton from "@/components/PredictionButton";
 import PredictionInsight from "@/components/PredictionInsight"; 
+import SavedModels from "@/components/SavedModels";
 import { StockData, PredictionResult } from "@/types/stock";
 import { getStockData } from "@/utils/api";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BarChart3, BrainCircuit, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -15,10 +17,17 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
+interface PredictionModel {
+  modelId: string;
+  predictions: PredictionResult[];
+}
+
 const StockView = () => {
   const { symbol } = useParams<{ symbol: string }>();
   const [stockData, setStockData] = useState<StockData | null>(null);
-  const [predictions, setPredictions] = useState<PredictionResult[]>([]);
+  const [currentPredictions, setCurrentPredictions] = useState<PredictionResult[]>([]);
+  const [savedPredictions, setSavedPredictions] = useState<PredictionModel[]>([]);
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +63,25 @@ const StockView = () => {
   }, [symbol]);
 
   const handlePredictionComplete = (newPredictions: PredictionResult[]) => {
-    setPredictions(newPredictions);
+    setCurrentPredictions(newPredictions);
+    setActiveModelId('current');
+  };
+
+  const handleModelSelect = (modelId: string, predictions: PredictionResult[]) => {
+    // Check if this model's predictions are already stored
+    const existingModelIndex = savedPredictions.findIndex(m => m.modelId === modelId);
+    
+    if (existingModelIndex >= 0) {
+      // Update existing model predictions
+      const updatedModels = [...savedPredictions];
+      updatedModels[existingModelIndex] = { modelId, predictions };
+      setSavedPredictions(updatedModels);
+    } else {
+      // Add new model predictions
+      setSavedPredictions([...savedPredictions, { modelId, predictions }]);
+    }
+    
+    setActiveModelId(modelId);
   };
 
   const getCurrentPrice = () => {
@@ -62,6 +89,17 @@ const StockView = () => {
       return 0;
     }
     return stockData.timeSeries[stockData.timeSeries.length - 1].close;
+  };
+
+  // Get active predictions based on the active model ID
+  const getActivePredictions = () => {
+    if (activeModelId === 'current') {
+      return currentPredictions;
+    } else if (activeModelId) {
+      const model = savedPredictions.find(m => m.modelId === activeModelId);
+      return model ? model.predictions : [];
+    }
+    return currentPredictions.length > 0 ? currentPredictions : (savedPredictions[0]?.predictions || []);
   };
 
   return (
@@ -109,31 +147,57 @@ const StockView = () => {
                   />
                 </div>
                 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                  <StockChart 
-                    stockData={stockData} 
-                    predictions={predictions} 
-                    className="lg:col-span-2"
-                    title="Price Prediction Chart"
-                  />
-                  <div className="space-y-6">
-                    <PredictionButton
-                      stockData={stockData}
-                      onPredictionComplete={handlePredictionComplete}
-                    />
-                    <PredictionInsight 
-                      predictions={predictions}
-                      currentPrice={getCurrentPrice()}
-                    />
-                  </div>
-                </div>
-                
-                <Tabs defaultValue="overview" className="mb-8">
+                <Tabs defaultValue="prediction" className="mb-8">
                   <TabsList className="mb-4">
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="financials">Financials</TabsTrigger>
-                    <TabsTrigger value="news">News</TabsTrigger>
+                    <TabsTrigger value="prediction" className="flex items-center gap-2">
+                      <BrainCircuit className="h-4 w-4" />
+                      ML Prediction
+                    </TabsTrigger>
+                    <TabsTrigger value="models" className="flex items-center gap-2">
+                      <History className="h-4 w-4" />
+                      Saved Models
+                    </TabsTrigger>
+                    <TabsTrigger value="overview" className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" />
+                      Overview
+                    </TabsTrigger>
                   </TabsList>
+                  
+                  <TabsContent value="prediction" className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <StockChart 
+                        stockData={stockData} 
+                        predictions={getActivePredictions()} 
+                        className="lg:col-span-2"
+                        title="Price Prediction Chart"
+                      />
+                      <div className="space-y-6">
+                        <PredictionButton
+                          stockData={stockData}
+                          onPredictionComplete={handlePredictionComplete}
+                        />
+                        <PredictionInsight 
+                          predictions={getActivePredictions()}
+                          currentPrice={getCurrentPrice()}
+                        />
+                      </div>
+                    </div>
+                  </TabsContent>
+                  
+                  <TabsContent value="models">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <StockChart 
+                        stockData={stockData} 
+                        predictions={getActivePredictions()} 
+                        className="lg:col-span-2"
+                        title={`Model Predictions: ${activeModelId || 'Current'}`}
+                      />
+                      <SavedModels 
+                        stockData={stockData}
+                        onModelSelect={handleModelSelect}
+                      />
+                    </div>
+                  </TabsContent>
                   
                   <TabsContent value="overview" className="space-y-4">
                     <Card className="p-6">
@@ -189,25 +253,6 @@ const StockView = () => {
                           </ul>
                         </div>
                       </div>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="financials">
-                    <Card className="p-6">
-                      <h3 className="text-xl font-semibold mb-4">Financial Information</h3>
-                      <p className="text-muted-foreground">
-                        Financial information for {stockData.name} would be displayed here,
-                        including income statements, balance sheets, and cash flow statements.
-                      </p>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="news">
-                    <Card className="p-6">
-                      <h3 className="text-xl font-semibold mb-4">Latest News</h3>
-                      <p className="text-muted-foreground">
-                        Recent news articles and updates about {stockData.name} would be displayed here.
-                      </p>
                     </Card>
                   </TabsContent>
                 </Tabs>

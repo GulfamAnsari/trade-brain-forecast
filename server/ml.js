@@ -1,5 +1,4 @@
-
-import tf from '@tensorflow/tfjs-node';
+import * as tf from '@tensorflow/tfjs-node';
 import fs from 'fs';
 import path from 'path';
 
@@ -9,251 +8,184 @@ if (!fs.existsSync(modelsDir)) {
   fs.mkdirSync(modelsDir, { recursive: true });
 }
 
-// Function to train and predict using the provided algorithm
+
 export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress) {
-  stockData?.timeSeries.sort((a, b) => {
-    return a.date - b.date;
-  });
+  if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
+    throw new Error("Stock data is empty or invalid.");
+  }
+
+  // Sort and slice the latest 360 records
+  stockData.timeSeries.sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (stockData.timeSeries.length > 360) {
+    stockData.timeSeries = stockData.timeSeries.slice(-360);
+  }
 
   try {
-    console.log("Training model with data:", 
-      JSON.stringify({
-        timeSeriesLength: stockData ? stockData.timeSeries.length : 0,
-        sequenceLength,
-        epochs,
-        daysToPredict
-      })
-    );
-    
-    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + daysToPredict) {
-      throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength + daysToPredict}.`);
+    onProgress({ stage: "starting", message: "Initializing model training...", percent: 5 });
+
+    if (stockData.timeSeries.length < sequenceLength + daysToPredict) {
+      throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength + daysToPredict}, but got ${stockData.timeSeries.length}.`);
     }
-    
+
     const modelKey = `${stockData.symbol}_${sequenceLength}_${daysToPredict}`;
-    const modelPath = path.join(modelsDir, `${modelKey}`);
+    const modelPath = path.join("models", `${modelKey}`);
     let model;
     let shouldTrain = true;
 
-    // Check if we have a saved model
-    if (fs.existsSync(modelPath)) {
+    // Load saved model if available
+    if (fs.existsSync(path.join(modelPath, "model.json"))) {
       try {
-        onProgress({ stage: 'loading', message: 'Loading saved model' });
+        onProgress({ stage: "loading", message: "Loading saved model...", percent: 10 });
         model = await tf.loadLayersModel(`file://${modelPath}/model.json`);
         shouldTrain = false;
-        console.log("Loaded existing model from disk");
-        onProgress({ stage: 'loading', message: 'Using saved model' });
+        onProgress({ stage: "loading", message: "Using saved model", percent: 15 });
       } catch (loadError) {
         console.error("Error loading saved model:", loadError);
         shouldTrain = true;
       }
     }
-    
+
     // Extract closing prices
     const closingPrices = stockData.timeSeries.map(entry => entry.close);
-    
-    // Calculate min and max values for normalization
+
+    // Normalize data
     const minPrice = Math.min(...closingPrices);
     const maxPrice = Math.max(...closingPrices);
     const range = maxPrice - minPrice;
-    
+
     if (range === 0) {
-      throw new Error("Cannot normalize data: all closing prices are identical");
+      throw new Error("Cannot normalize data: all closing prices are identical.");
     }
-    
-    console.log("Data range:", { minPrice, maxPrice, range });
-    onProgress({ stage: 'preprocessing', message: 'Normalizing data' });
-    
-    // Normalize prices
-    // const normalizedPrices = closingPrices.map(price => (price - minPrice) / range);
-    
-    // 🔹 Normalize data between -1 and 1 (better for LSTMs)
-    const normalizedPrices = closingPrices.map(
-      (p) => (2 * (p - minPrice) / (maxPrice - minPrice)) - 1
-    );
+
+    onProgress({ stage: "preprocessing", message: "Normalizing data...", percent: 20 });
+
+    const normalizedPrices = closingPrices.map(p => (2 * (p - minPrice) / range) - 1);
+
     // Prepare training data
     const inputSize = sequenceLength;
     const outputSize = daysToPredict;
-    
+    const xs = [];
+    const ys = [];
+
+    for (let i = 0; i <= normalizedPrices.length - inputSize - outputSize; i++) {
+      xs.push(normalizedPrices.slice(i, i + inputSize).map(v => [v]));
+      ys.push(normalizedPrices.slice(i + inputSize, i + inputSize + outputSize));
+    }
+
+    if (xs.length === 0 || ys.length === 0) {
+      throw new Error("Not enough samples for training.");
+    }
+
+    onProgress({ stage: "preparing", message: `Prepared ${xs.length} training samples`, percent: 30 });
+
     if (shouldTrain) {
-      const xs = [];
-      const ys = [];
-      
-      for (let i = 0; i < normalizedPrices.length - inputSize - outputSize; i++) {
-        const inputSlice = normalizedPrices.slice(i, i + inputSize);
-        // Ensure correct shape for TensorFlow tensor3d()
-        const formattedInput = inputSlice.map(v => [v]);
-        
-        xs.push(formattedInput);
-        ys.push(normalizedPrices.slice(i + inputSize, i + inputSize + outputSize));
-      }
-      
-      if (xs.length === 0 || ys.length === 0) {
-        throw new Error("Training data is empty after processing.");
-      }
-      
-      console.log(`Training on ${xs.length} samples.`);
-      onProgress({ stage: 'preparing', message: `Prepared ${xs.length} training samples` });
-      
       // Convert to tensors
       const tensorXs = tf.tensor3d(xs, [xs.length, inputSize, 1]);
       const tensorYs = tf.tensor2d(ys, [ys.length, outputSize]);
-      
-      // Define the LSTM model
-      // model = tf.sequential();
-      // model.add(tf.layers.lstm({ 
-      //   units: 64, 
-      //   returnSequences: false, 
-      //   inputShape: [inputSize, 1] 
-      // }));
-
 
       // Define the LSTM model
       model = tf.sequential();
-      // 🔹 First LSTM Layer (Extract patterns from stock prices)
-      model.add(tf.layers.lstm({ 
-        units: 128,   // Increased neurons for better learning
-        returnSequences: true,  // Enable return sequences for deeper learning
+      model.add(tf.layers.lstm({
+        units: 128,
+        returnSequences: true,
         inputShape: [inputSize, 1]
       }));
-      // 🔹 Second LSTM Layer (Refining patterns)
-      model.add(tf.layers.lstm({ 
-        units: 64, 
-        returnSequences: false 
-      }));
-      // 🔹 Dropout Layer (Prevents Overfitting)
-      model.add(tf.layers.dropout({ rate: 0.2 })); 
-      // 🔹 Dense Layer (Feature extraction)
+      model.add(tf.layers.lstm({ units: 64, returnSequences: false }));
+      model.add(tf.layers.dropout({ rate: 0.2 }));
       model.add(tf.layers.dense({ units: 64, activation: "relu" }));
-      // 🔹 Batch Normalization (Improves stability)
       model.add(tf.layers.batchNormalization());
-      // 🔹 Output Layer (Predicting next 7 days)
       model.add(tf.layers.dense({ units: outputSize }));
-      // 🔹 Compile Model with Adam Optimizer and Lower Learning Rate
-      model.compile({ 
-        optimizer: tf.train.adam(0.0005),  // Lower learning rate for smoother learning
+
+      model.compile({
+        optimizer: tf.train.adam(0.0005),
         loss: "meanSquaredError"
       });
 
-      // model.add(tf.layers.dense({ units: 32, activation: "relu" }));
-      // model.add(tf.layers.dense({ units: outputSize }));
-      
-      // model.compile({ 
-      //   optimizer: tf.train.adam(0.001), 
-      //   loss: "meanSquaredError" 
-      // });
-      
-      console.log("Training model...");
-      onProgress({ stage: 'training', message: 'Starting model training' });
-      
-      // Track history for reporting
-      const history = {
-        loss: [],
-        val_loss: []
-      };
-      
-      // Train the model
-      const result = await model.fit(tensorXs, tensorYs, {
+      onProgress({ stage: "training", message: "Starting model training...", percent: 40 });
+
+      await model.fit(tensorXs, tensorYs, {
         epochs: epochs,
         batchSize: batchSize,
         verbose: 1,
-        validationSplit: 0.1,//before  validationSplit: 0.1
+        validationSplit: 0.1,
         callbacks: {
           onEpochEnd: (epoch, logs) => {
-            console.log(`Epoch ${epoch+1}/${epochs}: loss = ${logs.loss.toFixed(4)}, val_loss = ${logs.val_loss.toFixed(4)}`);
-            history.loss.push(logs.loss);
-            history.val_loss.push(logs.val_loss);
-            onProgress({ 
-              stage: 'training', 
-              epoch: epoch + 1, 
-              totalEpochs: epochs, 
-              loss: logs.loss, 
-              val_loss: logs.val_loss
-            });
-          },
-          ...tf.callbacks.earlyStopping({ monitor: "val_loss", patience: 5 })
+            const progress = 40 + Math.round((epoch / epochs) * 40);
+            onProgress({ stage: "training", message: `Epoch ${epoch + 1}/${epochs} - Loss: ${logs.loss}`, percent: progress, epoch, epochs, loss: logs.loss });
+          }
         }
       });
-      
+
       // Save the model
-      onProgress({ stage: 'saving', message: 'Saving model to disk' });
+      onProgress({ stage: "saving", message: "Saving trained model...", percent: 85 });
+
       try {
         await model.save(`file://${modelPath}`);
-        console.log(`Model saved to ${modelPath}`);
       } catch (saveError) {
         console.error("Error saving model:", saveError);
       }
-      
+
       tensorXs.dispose();
       tensorYs.dispose();
     }
-    
-    console.log("Preparing data for prediction...");
-    onProgress({ stage: 'predicting', message: 'Generating predictions' });
-    
+
+    onProgress({ stage: "predicting", message: "Generating predictions...", percent: 90 });
+
+    // Predict next `daysToPredict`
     const lastSequence = normalizedPrices.slice(-inputSize).map(v => [v]);
     const tensorInput = tf.tensor3d([lastSequence], [1, inputSize, 1]);
-    
-    console.log("Running prediction...");
+
     const predictionTensor = model.predict(tensorInput);
-    
     if (!predictionTensor) {
       throw new Error("Model prediction returned undefined.");
     }
-    
+
     const predictedNormalized = await predictionTensor.data();
     predictionTensor.dispose();
     tensorInput.dispose();
-    
+
     // Convert back to original price range
-    const predictedPrices = Array.from(predictedNormalized).map(p => p * range + minPrice);
-    
+    const predictedPrices = Array.from(predictedNormalized).map(p => ((p + 1) * range / 2) + minPrice);
+
     // Get the last date from the data
     const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
-    
+
     // Prepare prediction results
     const predictions = [];
     for (let i = 0; i < daysToPredict; i++) {
-      // Calculate the next date (skip weekends)
       const predictionDate = new Date(lastDate);
       predictionDate.setDate(lastDate.getDate() + i + 1);
-      
+
       // Skip weekends (Saturday = 6, Sunday = 0)
       while (predictionDate.getDay() === 6 || predictionDate.getDay() === 0) {
         predictionDate.setDate(predictionDate.getDate() + 1);
       }
-      
+
       predictions.push({
-        date: predictionDate.toISOString().split('T')[0],
-        prediction: predictedPrices[i]
+        date: predictionDate.toISOString().split("T")[0],
+        prediction: predictedPrices[i] || null
       });
     }
-    
-    // Clean up the model if it's not going to be saved
+
     if (!shouldTrain) {
       model.dispose();
     }
-    
+
+    onProgress({ stage: "completed", message: "Prediction complete!", percent: 100 });
+
     return {
       predictions,
       modelData: {
         isExistingModel: !shouldTrain,
-        history: shouldTrain ? {
-          loss: model.history?.history?.loss || [],
-          val_loss: model.history?.history?.val_loss || []
-        } : null,
         min: minPrice,
         range: range,
-        params: {
-          inputSize,
-          outputSize,
-          epochs,
-          batchSize
-        }
+        params: { inputSize, outputSize, epochs, batchSize }
       }
     };
-    
+
   } catch (error) {
     console.error("Training and prediction error:", error);
+    onProgress({ stage: "error", message: error.message, percent: 0 });
     throw error;
   }
 }

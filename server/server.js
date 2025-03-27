@@ -75,13 +75,25 @@ app.get('/api/models', (req, res) => {
           const params = JSON.parse(fs.readFileSync(paramPath, 'utf8'));
           models.push({
             modelId: folder,
-            ...params
+            ...params,
+            // Include more comprehensive model information
+            dataPoints: params.dataPoints || 0,
+            minPrice: params.minPrice || 0,
+            range: params.range || 0,
+            totalEpochs: params.totalEpochs || params.epochs || 0
           });
         } catch (e) {
           console.error(`Error reading model params for ${folder}:`, e);
         }
       }
     }
+    
+    // Sort models by creation date, newest first
+    models.sort((a, b) => {
+      const dateA = new Date(a.created || a.trainingTime || 0);
+      const dateB = new Date(b.created || b.trainingTime || 0);
+      return dateB - dateA;
+    });
     
     res.json({ models });
     

@@ -20,7 +20,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     // Sort data by date (ascending)
     stockData.timeSeries.sort((a, b) => new Date(a.date) - new Date(b.date));
     
-    // Use only the specified sequence length of data
+    // Use only the specified sequence length of data if provided
     const trimmedData = sequenceLength > 0 && stockData.timeSeries.length > sequenceLength 
       ? stockData.timeSeries.slice(-sequenceLength) 
       : stockData.timeSeries;
@@ -40,7 +40,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     const modelPath = path.join("models", `${modelKey}`);
     let model;
     let shouldTrain = true;
-    let savedMinPrice, savedRange;
+    let savedMinPrice, savedRange, savedModelParams;
 
     // Load saved model if available
     if (fs.existsSync(path.join(modelPath, "model.json"))) {
@@ -53,6 +53,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           const params = JSON.parse(fs.readFileSync(path.join(modelPath, "params.json"), 'utf8'));
           savedMinPrice = params.minPrice;
           savedRange = params.range;
+          savedModelParams = params;
           
           onProgress({ 
             stage: "loading", 
@@ -63,7 +64,10 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
               outputSize: params.outputSize,
               saved: true,
               epochs: params.epochs,
-              batchSize: params.batchSize
+              totalEpochs: params.totalEpochs || params.epochs,
+              batchSize: params.batchSize,
+              dataPoints: params.dataPoints || trimmedData.length,
+              created: params.created || params.trainingTime
             }
           });
         }
@@ -95,18 +99,27 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       throw new Error("Cannot normalize data: all closing prices are identical.");
     }
 
-    onProgress({ stage: "preprocessing", message: "Normalizing data...", percent: 25 });
+    onProgress({ 
+      stage: "preprocessing", 
+      message: "Normalizing data...", 
+      percent: 25,
+      dataPoints: trimmedData.length,
+      minPrice,
+      range
+    });
 
     // Normalize to [-1, 1] range for better training
     const normalizedPrices = closingPrices.map(p => (2 * (p - minPrice) / range) - 1);
 
+    let windowSize;
+    
     if (shouldTrain) {
       // Prepare training data - use all available data points for training
       const xs = [];
       const ys = [];
       
       // Create sequences for training
-      const windowSize = Math.min(60, Math.floor(trimmedData.length / 3)); // Use appropriate window size
+      windowSize = Math.min(60, Math.floor(trimmedData.length / 3)); // Use appropriate window size
       
       for (let i = 0; i <= normalizedPrices.length - windowSize - daysToPredict; i++) {
         xs.push(normalizedPrices.slice(i, i + windowSize).map(v => [v]));
@@ -121,7 +134,8 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
         stage: "preparing", 
         message: `Prepared ${xs.length} training samples`, 
         percent: 30,
-        samples: xs.length
+        samples: xs.length,
+        windowSize
       });
 
       // Convert to tensors
@@ -156,7 +170,10 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           outputSize: daysToPredict,
           epochs: epochs,
           totalEpochs: epochs,
-          batchSize: batchSize
+          batchSize: batchSize,
+          dataPoints: trimmedData.length,
+          minPrice,
+          range
         }
       });
 
@@ -197,7 +214,8 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           batchSize,
           epochs,
           totalEpochs: epochs,
-          trainingTime: new Date().toISOString()
+          dataPoints: trimmedData.length,
+          created: new Date().toISOString()
         };
         
         fs.writeFileSync(
@@ -221,7 +239,10 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
             epochs: epochs,
             totalEpochs: epochs,
             batchSize: batchSize,
-            created: new Date().toISOString()
+            created: new Date().toISOString(),
+            dataPoints: trimmedData.length,
+            minPrice,
+            range
           }
         });
       } catch (saveError) {
@@ -235,9 +256,36 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
 
       tensorXs.dispose();
       tensorYs.dispose();
+    } else {
+      // For loaded models, get the input size from the model
+      windowSize = model.inputs[0].shape[1];
+      
+      // Send progress with loaded model info
+      onProgress({
+        stage: "loaded",
+        message: "Model loaded successfully",
+        percent: 75,
+        modelInfo: {
+          inputSize: windowSize,
+          outputSize: daysToPredict,
+          epochs: savedModelParams?.epochs || 0,
+          totalEpochs: savedModelParams?.totalEpochs || savedModelParams?.epochs || 0,
+          batchSize: savedModelParams?.batchSize || 0,
+          created: savedModelParams?.created || savedModelParams?.trainingTime,
+          dataPoints: savedModelParams?.dataPoints || trimmedData.length,
+          minPrice,
+          range
+        }
+      });
     }
 
-    onProgress({ stage: "predicting", message: "Generating predictions...", percent: 95 });
+    onProgress({ 
+      stage: "predicting", 
+      message: "Generating predictions...", 
+      percent: 95,
+      windowSize,
+      dataPoints: trimmedData.length
+    });
 
     // Prepare for prediction - use the last available window
     const windowSize = model.inputs[0].shape[1];
@@ -302,7 +350,8 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           outputSize: daysToPredict, 
           epochs, 
           totalEpochs: epochs,
-          batchSize 
+          batchSize,
+          dataPoints: trimmedData.length
         }
       }
     };

@@ -16,6 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import MultiTrainingDialog from "@/components/MultiTrainingDialog";
 
 interface PredictionModel {
   modelId: string;
@@ -148,20 +149,27 @@ const StockView = () => {
                 </div>
                 
                 <Tabs defaultValue="prediction" className="mb-8">
-                  <TabsList className="mb-4">
-                    <TabsTrigger value="prediction" className="flex items-center gap-2">
-                      <BrainCircuit className="h-4 w-4" />
-                      ML Prediction
-                    </TabsTrigger>
-                    <TabsTrigger value="models" className="flex items-center gap-2">
-                      <History className="h-4 w-4" />
-                      Saved Models
-                    </TabsTrigger>
-                    <TabsTrigger value="overview" className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4" />
-                      Overview
-                    </TabsTrigger>
-                  </TabsList>
+                  <div className="flex justify-between items-center mb-4">
+                    <TabsList>
+                      <TabsTrigger value="prediction" className="flex items-center gap-2">
+                        <BrainCircuit className="h-4 w-4" />
+                        ML Prediction
+                      </TabsTrigger>
+                      <TabsTrigger value="models" className="flex items-center gap-2">
+                        <History className="h-4 w-4" />
+                        Saved Models
+                      </TabsTrigger>
+                      <TabsTrigger value="overview" className="flex items-center gap-2">
+                        <BarChart3 className="h-4 w-4" />
+                        Overview
+                      </TabsTrigger>
+                    </TabsList>
+                    
+                    {stockData && <MultiTrainingDialog 
+                      stockData={stockData} 
+                      onPredictionComplete={handlePredictionComplete} 
+                    />}
+                  </div>
                   
                   <TabsContent value="prediction" className="space-y-4">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

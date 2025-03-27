@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -132,11 +133,15 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         }
       }
       
-      const completedIndex = await Promise.race(
-        activeTrainings.map((p, i) => p.then(() => i))
-      );
-      
-      activeTrainings.splice(completedIndex, 1);
+      if (activeTrainings.length > 0) {
+        const completedIndex = await Promise.race(
+          activeTrainings.map((p, i) => p.then(() => i))
+        );
+        
+        activeTrainings.splice(completedIndex, 1);
+      } else {
+        break; // Exit the loop if there are no active trainings
+      }
     }
     
     setTrainingComplete(true);
@@ -212,7 +217,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         <DialogHeader>
           <DialogTitle>Train Multiple Models</DialogTitle>
           <DialogDescription>
-            Configure and train multiple models simultaneously for {stockData.symbol}.
+            Configure and train multiple models simultaneously for {stockData?.symbol}.
           </DialogDescription>
         </DialogHeader>
         
@@ -247,6 +252,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       value={model.sequenceLength}
                       onChange={(e) => updateModelConfig(model.id, { sequenceLength: parseInt(e.target.value) || 0 })}
                       disabled={currentlyTraining.includes(model.id)}
+                      min={1}
                     />
                   </div>
                   

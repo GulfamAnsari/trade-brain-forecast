@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
@@ -69,16 +68,13 @@ const StockView = () => {
   };
 
   const handleModelSelect = (modelId: string, predictions: PredictionResult[]) => {
-    // Check if this model's predictions are already stored
     const existingModelIndex = savedPredictions.findIndex(m => m.modelId === modelId);
     
     if (existingModelIndex >= 0) {
-      // Update existing model predictions
       const updatedModels = [...savedPredictions];
       updatedModels[existingModelIndex] = { modelId, predictions };
       setSavedPredictions(updatedModels);
     } else {
-      // Add new model predictions
       setSavedPredictions([...savedPredictions, { modelId, predictions }]);
     }
     
@@ -92,7 +88,6 @@ const StockView = () => {
     return stockData.timeSeries[stockData.timeSeries.length - 1].close;
   };
 
-  // Get active predictions based on the active model ID
   const getActivePredictions = () => {
     if (activeModelId === 'current') {
       return currentPredictions;
@@ -124,17 +119,7 @@ const StockView = () => {
             ) : null}
             
             {isLoading ? (
-              <>
-                <Skeleton className="h-10 w-2/3 mb-2" />
-                <Skeleton className="h-6 w-1/3 mb-8" />
-                
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                  <Skeleton className="h-[320px] lg:col-span-2" />
-                  <Skeleton className="h-[320px]" />
-                </div>
-                
-                <Skeleton className="h-[300px] mb-8" />
-              </>
+              <></>
             ) : stockData ? (
               <>
                 <StockDetails stockData={stockData} className="mb-8" />
@@ -165,10 +150,12 @@ const StockView = () => {
                       </TabsTrigger>
                     </TabsList>
                     
-                    {stockData && <MultiTrainingDialog 
-                      stockData={stockData} 
-                      onPredictionComplete={handlePredictionComplete} 
-                    />}
+                    {stockData && 
+                      <MultiTrainingDialog 
+                        stockData={stockData} 
+                        onPredictionComplete={handlePredictionComplete} 
+                      />
+                    }
                   </div>
                   
                   <TabsContent value="prediction" className="space-y-4">

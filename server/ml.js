@@ -1,3 +1,4 @@
+
 import * as tf from '@tensorflow/tfjs-node';
 import fs from 'fs';
 import path from 'path';
@@ -8,37 +9,63 @@ if (!fs.existsSync(modelsDir)) {
   fs.mkdirSync(modelsDir, { recursive: true });
 }
 
-
 export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress) {
   if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
     throw new Error("Stock data is empty or invalid.");
   }
 
-  // Sort and slice the latest 360 records
-  stockData.timeSeries.sort((a, b) => new Date(a.date) - new Date(b.date));
-  if (stockData.timeSeries.length > 360) {
-    stockData.timeSeries = stockData.timeSeries.slice(-360);
-  }
-
   try {
     onProgress({ stage: "starting", message: "Initializing model training...", percent: 5 });
 
-    if (stockData.timeSeries.length < sequenceLength + daysToPredict) {
-      throw new Error(`Not enough data points for prediction. Need at least ${sequenceLength + daysToPredict}, but got ${stockData.timeSeries.length}.`);
+    // Sort data by date (ascending)
+    stockData.timeSeries.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // Use only the specified sequence length of data
+    const trimmedData = sequenceLength > 0 && stockData.timeSeries.length > sequenceLength 
+      ? stockData.timeSeries.slice(-sequenceLength) 
+      : stockData.timeSeries;
+    
+    if (trimmedData.length < 5) {
+      throw new Error(`Not enough data points for prediction. Need at least 5, but got ${trimmedData.length}.`);
     }
+
+    onProgress({ 
+      stage: "data", 
+      message: `Using ${trimmedData.length} data points for analysis`, 
+      percent: 10 
+    });
 
     const modelKey = `${stockData.symbol}_${sequenceLength}_${daysToPredict}`;
     const modelPath = path.join("models", `${modelKey}`);
     let model;
     let shouldTrain = true;
+    let savedMinPrice, savedRange;
 
     // Load saved model if available
     if (fs.existsSync(path.join(modelPath, "model.json"))) {
       try {
-        onProgress({ stage: "loading", message: "Loading saved model...", percent: 10 });
+        onProgress({ stage: "loading", message: "Loading saved model...", percent: 15 });
         model = await tf.loadLayersModel(`file://${modelPath}/model.json`);
+        
+        // Load normalization parameters
+        if (fs.existsSync(path.join(modelPath, "params.json"))) {
+          const params = JSON.parse(fs.readFileSync(path.join(modelPath, "params.json"), 'utf8'));
+          savedMinPrice = params.minPrice;
+          savedRange = params.range;
+          
+          onProgress({ 
+            stage: "loading", 
+            message: "Using saved model and parameters", 
+            percent: 20,
+            modelInfo: {
+              inputSize: params.inputSize,
+              outputSize: params.outputSize,
+              saved: true
+            }
+          });
+        }
+        
         shouldTrain = false;
-        onProgress({ stage: "loading", message: "Using saved model", percent: 15 });
       } catch (loadError) {
         console.error("Error loading saved model:", loadError);
         shouldTrain = true;
@@ -46,94 +73,159 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     }
 
     // Extract closing prices
-    const closingPrices = stockData.timeSeries.map(entry => entry.close);
+    const closingPrices = trimmedData.map(entry => entry.close);
 
     // Normalize data
-    const minPrice = Math.min(...closingPrices);
-    const maxPrice = Math.max(...closingPrices);
-    const range = maxPrice - minPrice;
+    let minPrice, range;
+    
+    if (!shouldTrain && savedMinPrice !== undefined && savedRange !== undefined) {
+      // Use saved normalization parameters
+      minPrice = savedMinPrice;
+      range = savedRange;
+    } else {
+      // Calculate new normalization parameters
+      minPrice = Math.min(...closingPrices);
+      range = Math.max(...closingPrices) - minPrice;
+    }
 
     if (range === 0) {
       throw new Error("Cannot normalize data: all closing prices are identical.");
     }
 
-    onProgress({ stage: "preprocessing", message: "Normalizing data...", percent: 20 });
+    onProgress({ stage: "preprocessing", message: "Normalizing data...", percent: 25 });
 
+    // Normalize to [-1, 1] range for better training
     const normalizedPrices = closingPrices.map(p => (2 * (p - minPrice) / range) - 1);
 
-    // Prepare training data
-    const inputSize = sequenceLength;
-    const outputSize = daysToPredict;
-    const xs = [];
-    const ys = [];
-
-    for (let i = 0; i <= normalizedPrices.length - inputSize - outputSize; i++) {
-      xs.push(normalizedPrices.slice(i, i + inputSize).map(v => [v]));
-      ys.push(normalizedPrices.slice(i + inputSize, i + inputSize + outputSize));
-    }
-
-    if (xs.length === 0 || ys.length === 0) {
-      throw new Error("Not enough samples for training.");
-    }
-
-    onProgress({ stage: "preparing", message: `Prepared ${xs.length} training samples`, percent: 30 });
-
     if (shouldTrain) {
+      // Prepare training data - use all available data points for training
+      const xs = [];
+      const ys = [];
+      
+      // Create sequences for training
+      const windowSize = Math.min(60, Math.floor(trimmedData.length / 3)); // Use appropriate window size
+      
+      for (let i = 0; i <= normalizedPrices.length - windowSize - daysToPredict; i++) {
+        xs.push(normalizedPrices.slice(i, i + windowSize).map(v => [v]));
+        ys.push(normalizedPrices.slice(i + windowSize, i + windowSize + daysToPredict));
+      }
+
+      if (xs.length === 0 || ys.length === 0) {
+        throw new Error("Not enough samples for training.");
+      }
+
+      onProgress({ 
+        stage: "preparing", 
+        message: `Prepared ${xs.length} training samples`, 
+        percent: 30,
+        samples: xs.length
+      });
+
       // Convert to tensors
-      const tensorXs = tf.tensor3d(xs, [xs.length, inputSize, 1]);
-      const tensorYs = tf.tensor2d(ys, [ys.length, outputSize]);
+      const tensorXs = tf.tensor3d(xs, [xs.length, windowSize, 1]);
+      const tensorYs = tf.tensor2d(ys, [ys.length, daysToPredict]);
 
       // Define the LSTM model
       model = tf.sequential();
       model.add(tf.layers.lstm({
-        units: 128,
+        units: 64,
         returnSequences: true,
-        inputShape: [inputSize, 1]
+        inputShape: [windowSize, 1]
       }));
+      model.add(tf.layers.dropout({ rate: 0.2 }));
       model.add(tf.layers.lstm({ units: 64, returnSequences: false }));
       model.add(tf.layers.dropout({ rate: 0.2 }));
-      model.add(tf.layers.dense({ units: 64, activation: "relu" }));
-      model.add(tf.layers.batchNormalization());
-      model.add(tf.layers.dense({ units: outputSize }));
+      model.add(tf.layers.dense({ units: 32, activation: "relu" }));
+      model.add(tf.layers.dense({ units: daysToPredict }));
 
       model.compile({
-        optimizer: tf.train.adam(0.0005),
+        optimizer: tf.train.adam(0.001),
         loss: "meanSquaredError"
       });
 
-      onProgress({ stage: "training", message: "Starting model training...", percent: 40 });
+      onProgress({ 
+        stage: "training", 
+        message: "Starting model training...", 
+        percent: 40,
+        modelInfo: {
+          layers: [64, 64, 32, daysToPredict],
+          inputSize: windowSize,
+          outputSize: daysToPredict
+        }
+      });
 
-      await model.fit(tensorXs, tensorYs, {
+      // Train the model
+      const history = await model.fit(tensorXs, tensorYs, {
         epochs: epochs,
         batchSize: batchSize,
         verbose: 1,
-        validationSplit: 0.1,
+        validationSplit: 0.2,
         callbacks: {
           onEpochEnd: (epoch, logs) => {
             const progress = 40 + Math.round((epoch / epochs) * 40);
-            onProgress({ stage: "training", message: `Epoch ${epoch + 1}/${epochs} - Loss: ${logs.loss}`, percent: progress, epoch, epochs, loss: logs.loss });
+            onProgress({ 
+              stage: "training", 
+              message: `Epoch ${epoch + 1}/${epochs}`, 
+              percent: progress, 
+              epoch: epoch + 1, 
+              totalEpochs: epochs, 
+              loss: logs.loss,
+              val_loss: logs.val_loss
+            });
           }
         }
       });
 
-      // Save the model
+      // Save model and parameters
       onProgress({ stage: "saving", message: "Saving trained model...", percent: 85 });
 
       try {
         await model.save(`file://${modelPath}`);
+        
+        // Save normalization parameters
+        const params = {
+          minPrice,
+          range,
+          inputSize: windowSize,
+          outputSize: daysToPredict,
+          batchSize,
+          epochs
+        };
+        
+        fs.writeFileSync(
+          path.join(modelPath, "params.json"), 
+          JSON.stringify(params), 
+          'utf8'
+        );
+        
+        onProgress({ 
+          stage: "saved", 
+          message: "Model saved successfully", 
+          percent: 90,
+          history: {
+            loss: history.history.loss,
+            val_loss: history.history.val_loss
+          }
+        });
       } catch (saveError) {
         console.error("Error saving model:", saveError);
+        onProgress({ 
+          stage: "error", 
+          message: `Failed to save model: ${saveError.message}`, 
+          percent: 90 
+        });
       }
 
       tensorXs.dispose();
       tensorYs.dispose();
     }
 
-    onProgress({ stage: "predicting", message: "Generating predictions...", percent: 90 });
+    onProgress({ stage: "predicting", message: "Generating predictions...", percent: 95 });
 
-    // Predict next `daysToPredict`
-    const lastSequence = normalizedPrices.slice(-inputSize).map(v => [v]);
-    const tensorInput = tf.tensor3d([lastSequence], [1, inputSize, 1]);
+    // Prepare for prediction - use the last available window
+    const windowSize = model.inputs[0].shape[1];
+    const inputWindow = normalizedPrices.slice(-windowSize).map(v => [v]);
+    const tensorInput = tf.tensor3d([inputWindow], [1, windowSize, 1]);
 
     const predictionTensor = model.predict(tensorInput);
     if (!predictionTensor) {
@@ -148,7 +240,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     const predictedPrices = Array.from(predictedNormalized).map(p => ((p + 1) * range / 2) + minPrice);
 
     // Get the last date from the data
-    const lastDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
+    const lastDate = new Date(trimmedData[trimmedData.length - 1].date);
 
     // Prepare prediction results
     const predictions = [];
@@ -167,11 +259,17 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       });
     }
 
+    // Clean up memory
     if (!shouldTrain) {
       model.dispose();
     }
 
-    onProgress({ stage: "completed", message: "Prediction complete!", percent: 100 });
+    onProgress({ 
+      stage: "completed", 
+      message: "Prediction complete!", 
+      percent: 100,
+      dataPoints: trimmedData.length
+    });
 
     return {
       predictions,
@@ -179,13 +277,24 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
         isExistingModel: !shouldTrain,
         min: minPrice,
         range: range,
-        params: { inputSize, outputSize, epochs, batchSize }
+        dataPoints: trimmedData.length,
+        params: { 
+          inputSize: windowSize || model.inputs[0].shape[1], 
+          outputSize: daysToPredict, 
+          epochs, 
+          batchSize 
+        }
       }
     };
 
   } catch (error) {
     console.error("Training and prediction error:", error);
-    onProgress({ stage: "error", message: error.message, percent: 0 });
+    onProgress({ 
+      stage: "error", 
+      message: error.message, 
+      percent: 0,
+      error: error.toString()
+    });
     throw error;
   }
 }

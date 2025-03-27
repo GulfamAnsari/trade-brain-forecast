@@ -18,8 +18,8 @@ interface PredictionButtonProps {
 const defaultSettings = {
   daysToPredict: 30,
   sequenceLength: 360, // Default to 1 year (approximately 252 trading days)
-  epochs: 1000,
-  batchSize: 64
+  epochs: 100,
+  batchSize: 32
 };
 
 const PredictionButton = ({ stockData, onPredictionComplete, className }: PredictionButtonProps) => {
@@ -33,6 +33,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [serverError, setServerError] = useState<string | null>(null);
   const [trainingStats, setTrainingStats] = useState<any | null>(null);
   const [usingSavedModel, setUsingSavedModel] = useState(false);
+  const [dataPoints, setDataPoints] = useState<number | null>(null);
 
   useEffect(() => {
     const initialize = async () => {
@@ -61,8 +62,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       return;
     }
     
-    if (!stockData || stockData.timeSeries.length < settings.sequenceLength + 5) {
-      toast.error(`Not enough data to make predictions. Need at least ${settings.sequenceLength + 5} data points.`);
+    if (!stockData || stockData.timeSeries.length < 5) {
+      toast.error(`Not enough data to make predictions. Need at least 5 data points.`);
       return;
     }
     
@@ -78,6 +79,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setProgressText("Initializing analysis...");
     setTrainingStats(null);
     setUsingSavedModel(false);
+    setDataPoints(null);
     
     try {
       const result = await analyzeStock(
@@ -87,13 +89,17 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         settings.batchSize,
         settings.daysToPredict,
         (progressData) => {
-          if (progressData.stage === 'loading') {
+          // Set default progress
+          setProgress(progressData.percent || 0);
+          
+          if (progressData.stage === 'data') {
+            setDataPoints(progressData.dataPoints);
+            setProgressText(`Using ${progressData.dataPoints} data points for analysis...`);
+          } else if (progressData.stage === 'loading') {
             setUsingSavedModel(true);
             setProgressText(`${progressData.message || 'Loading saved model'}...`);
           } else if (progressData.stage === 'training' && progressData.epoch !== undefined) {
-            const percentComplete = Math.floor((progressData.epoch / progressData.totalEpochs) * 100);
-            setProgress(percentComplete);
-            setProgressText(`Training model: ${progressData.epoch}/${progressData.totalEpochs} epochs (Loss: ${progressData.loss?.toFixed(4)})`);
+            setProgressText(`Training model: ${progressData.epoch}/${progressData.totalEpochs} epochs`);
             
             setTrainingStats({
               currentEpoch: progressData.epoch,
@@ -101,10 +107,18 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               loss: progressData.loss,
               val_loss: progressData.val_loss
             });
-          } else if (progressData.stage === 'saving') {
-            setProgressText(`${progressData.message || 'Saving model'}...`);
+          } else if (progressData.stage === 'saved' && progressData.history) {
+            setTrainingStats({
+              ...trainingStats,
+              history: progressData.history
+            });
+            setProgressText(`${progressData.message || 'Model saved'}...`);
           } else {
             setProgressText(`${progressData.message || progressData.stage || 'Processing'}...`);
+          }
+          
+          if (progressData.dataPoints) {
+            setDataPoints(progressData.dataPoints);
           }
         },
         newAbortController.signal
@@ -174,6 +188,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             <Progress value={progress} className="w-full h-2" />
             <p className="text-sm text-muted-foreground mt-2">{progressText}</p>
             
+            {dataPoints && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Using {dataPoints} data points for analysis
+              </p>
+            )}
+            
             {usingSavedModel ? (
               <p className="text-xs text-muted-foreground mt-2">
                 Using previously trained model. This will be much faster!
@@ -181,13 +201,21 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             ) : trainingStats && (
               <div className="mt-3 space-y-2 text-xs">
                 <div className="flex justify-between">
+                  <span>Training progress:</span>
+                  <span className="font-medium">
+                    {trainingStats.currentEpoch}/{trainingStats.totalEpochs} epochs
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span>Training loss:</span>
                   <span className="font-medium">{trainingStats.loss?.toFixed(6)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Validation loss:</span>
-                  <span className="font-medium">{trainingStats.val_loss?.toFixed(6)}</span>
-                </div>
+                {trainingStats.val_loss && (
+                  <div className="flex justify-between">
+                    <span>Validation loss:</span>
+                    <span className="font-medium">{trainingStats.val_loss?.toFixed(6)}</span>
+                  </div>
+                )}
               </div>
             )}
             
@@ -213,21 +241,33 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               </div>
             ) : (
               <>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Final training loss:</span>
-                  <span className="font-medium">{modelData.history?.loss[modelData.history.loss.length - 1]?.toFixed(6) || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Final validation loss:</span>
-                  <span className="font-medium">{modelData.history?.val_loss[modelData.history.val_loss.length - 1]?.toFixed(6) || 'N/A'}</span>
-                </div>
+                {trainingStats?.history && (
+                  <div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Final training loss:</span>
+                      <span className="font-medium">
+                        {trainingStats.history.loss[trainingStats.history.loss.length - 1]?.toFixed(6) || 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Final validation loss:</span>
+                      <span className="font-medium">
+                        {trainingStats.history.val_loss[trainingStats.history.val_loss.length - 1]?.toFixed(6) || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </>
             )}
             
             <div className="mt-4 text-sm font-medium">Model Parameters:</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Input Size:</span>
+                <span className="text-muted-foreground">Data Points:</span>
+                <span className="font-medium">{modelData.dataPoints || 'Unknown'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Sequence Length:</span>
                 <span className="font-medium">{settings.sequenceLength}</span>
               </div>
               <div className="flex justify-between items-center">
@@ -241,6 +281,10 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Batch Size:</span>
                 <span className="font-medium">{settings.batchSize}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Window Size:</span>
+                <span className="font-medium">{modelData.params?.inputSize || 'Unknown'}</span>
               </div>
             </div>
           </div>
@@ -271,7 +315,11 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             <div className="text-sm font-medium">Current Parameters:</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Input Days:</span>
+                <span className="text-muted-foreground">Data Points:</span>
+                <span className="font-medium">{stockData?.timeSeries?.length || 0}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Sequence Length:</span>
                 <span className="font-medium">{settings.sequenceLength}</span>
               </div>
               <div className="flex justify-between items-center">

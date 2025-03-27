@@ -63,6 +63,7 @@ app.post('/api/analyze', async (req, res) => {
     }
     
     console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
+    console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}`);
     
     // Setup progress callback
     const onProgress = (progress) => {
@@ -97,7 +98,8 @@ app.post('/api/analyze', async (req, res) => {
       type: 'status',
       data: { 
         message: 'Analysis complete',
-        stage: 'complete'
+        stage: 'complete',
+        modelInfo: result.modelData
       }
     });
     
@@ -113,7 +115,8 @@ app.post('/api/analyze', async (req, res) => {
       type: 'status',
       data: { 
         message: error.message || 'Failed to analyze stock data',
-        stage: 'error'
+        stage: 'error',
+        error: error.toString()
       }
     });
     

@@ -122,27 +122,45 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       message: "Waiting to start..."
     })));
     
-    // Start training all models in parallel
-    const trainingPromises = modelQueue.map(model => {
-      // Add to currently training state
-      setCurrentlyTraining(prev => [...prev, model.id]);
+    // Start training all models in parallel with a small delay between each
+    const startTrainingWithDelay = async () => {
+      const trainingPromises = [];
       
-      // Start training the model and return the promise
-      return trainModel(model.id);
-    });
+      for (let i = 0; i < modelQueue.length; i++) {
+        const model = modelQueue[i];
+        // Add to currently training state
+        setCurrentlyTraining(prev => [...prev, model.id]);
+        
+        // Start training the model and add the promise to the array
+        const trainingPromise = trainModel(model.id);
+        trainingPromises.push(trainingPromise);
+        
+        // Add a slight delay between starting each model to avoid overwhelming the server
+        if (i < modelQueue.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // Wait for all models to finish training
+      return Promise.all(trainingPromises);
+    };
     
-    // Wait for all models to finish training
-    await Promise.all(trainingPromises);
-    
-    setCurrentlyTraining([]);
-    setTrainingComplete(true);
-    
-    // If we have predictions from the last completed model, pass them up
-    if (lastCompletedModelPredictions) {
-      onPredictionComplete(lastCompletedModelPredictions);
+    try {
+      await startTrainingWithDelay();
+      
+      setCurrentlyTraining([]);
+      setTrainingComplete(true);
+      
+      // If we have predictions from the last completed model, pass them up
+      if (lastCompletedModelPredictions) {
+        onPredictionComplete(lastCompletedModelPredictions);
+      }
+      
+      toast.success("All model training complete!");
+    } catch (error) {
+      console.error("Training error:", error);
+      toast.error("Some models failed to train. Check the status tab for details.");
     }
-    
-    toast.success("All model training complete!");
   };
 
   const trainModel = async (modelId: string): Promise<void> => {
@@ -175,6 +193,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
             const newProgress = progressData.percent || 0;
             const message = progressData.message || progressData.stage || "Processing...";
             
+            // Use the modelId to update only that specific model
             updateModelConfig(model.id, { 
               progress: newProgress,
               message: message

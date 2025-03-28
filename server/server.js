@@ -32,6 +32,8 @@ const clients = new Set();
 
 // Track active training sessions to limit concurrent processing
 const activeTrainingSessions = new Map();
+// Track multi-model sessions
+const multiModelSessions = new Set();
 
 // WebSocket connection handler
 wss.on('connection', (ws) => {
@@ -142,7 +144,7 @@ app.delete('/api/models/:modelId', async (req, res) => {
 // Combined train and predict endpoint
 app.post('/api/analyze', async (req, res) => {
   try {
-    const { stockData, sequenceLength, epochs, batchSize, daysToPredict, modelId } = req.body;
+    const { stockData, sequenceLength, epochs, batchSize, daysToPredict, modelId, isMultiModel } = req.body;
     
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
@@ -150,6 +152,13 @@ app.post('/api/analyze', async (req, res) => {
     
     console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
     console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}, modelId=${modelId || 'none'}`);
+    console.log(`Is part of multi-model training: ${isMultiModel ? 'Yes' : 'No'}`);
+    
+    // If this is part of a multi-model training, add to the tracking set
+    if (isMultiModel && modelId) {
+      multiModelSessions.add(modelId);
+      console.log(`Added ${modelId} to multi-model tracking. Current multi-models: ${multiModelSessions.size}`);
+    }
     
     // Limit concurrent training sessions
     const maxConcurrentTraining = 5; // Allow 5 concurrent trainings
@@ -196,6 +205,12 @@ app.post('/api/analyze', async (req, res) => {
     // Remove from active training sessions
     activeTrainingSessions.delete(modelId);
     
+    // Remove from multi-model tracking if applicable
+    if (multiModelSessions.has(modelId)) {
+      multiModelSessions.delete(modelId);
+      console.log(`Removed ${modelId} from multi-model tracking. Remaining multi-models: ${multiModelSessions.size}`);
+    }
+    
     // Final status
     broadcast({
       type: 'status',
@@ -219,6 +234,12 @@ app.post('/api/analyze', async (req, res) => {
     // Remove from active training sessions on error
     if (modelId) {
       activeTrainingSessions.delete(modelId);
+      
+      // Also remove from multi-model tracking if applicable
+      if (multiModelSessions.has(modelId)) {
+        multiModelSessions.delete(modelId);
+        console.log(`Removed ${modelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
+      }
     }
     
     // Error status

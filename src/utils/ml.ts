@@ -1,4 +1,3 @@
-
 import { StockData, PredictionResult } from "@/types/stock";
 
 const SERVER_URL = "http://localhost:5000/api";
@@ -9,6 +8,7 @@ let messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 2000; // 2 seconds
+let activeModelTraining = new Set<string>(); // Track active model training
 
 export const initializeWebSocket = () => {
   if (websocket?.readyState === WebSocket.OPEN) {
@@ -28,6 +28,13 @@ export const initializeWebSocket = () => {
       const modelId = message.modelId || 'global';
       
       console.log(`WebSocket message received for modelId: ${modelId}`, message);
+      
+      // Keep track of completed models
+      if (message.type === 'status' && message.data && message.data.stage === 'complete' && modelId !== 'global') {
+        // Remove from active training when a model is complete
+        activeModelTraining.delete(modelId);
+        console.log(`Model ${modelId} completed, remaining active models: ${activeModelTraining.size}`);
+      }
       
       // Handle messages for specific models
       if (messageHandlers.has(modelId)) {
@@ -77,6 +84,11 @@ export const addWebSocketHandler = (handler: (data: any) => void, modelId?: stri
   
   messageHandlers.get(id)?.add(handler);
   
+  // Track this model as active for training if it has a model ID
+  if (modelId && modelId !== 'global') {
+    activeModelTraining.add(modelId);
+  }
+  
   return () => {
     const handlers = messageHandlers.get(id);
     if (handlers) {
@@ -84,6 +96,11 @@ export const addWebSocketHandler = (handler: (data: any) => void, modelId?: stri
       if (handlers.size === 0) {
         messageHandlers.delete(id);
       }
+    }
+    
+    // Remove from active training when handler is removed
+    if (modelId && modelId !== 'global') {
+      activeModelTraining.delete(modelId);
     }
   };
 };
@@ -153,7 +170,9 @@ export const analyzeStock = async (
           epochs,
           batchSize,
           daysToPredict,
-          modelId
+          modelId,
+          // Add a flag to indicate this is part of multi-model training
+          isMultiModel: activeModelTraining.size > 1
         }),
         signal
       });

@@ -93,7 +93,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   };
 
   const updateModelConfig = (id: string, updates: Partial<ModelConfig>) => {
-    setModels(models.map(model => 
+    setModels(prevModels => prevModels.map(model => 
       model.id === id ? { ...model, ...updates } : model
     ));
   };
@@ -101,54 +101,46 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   const handleTrainAll = async () => {
     setTrainingComplete(false);
     
+    // Clone the models array to avoid mutating state directly
     const trainingQueue = [...models];
     
-    setModels(models.map(model => ({
+    // Reset all models to pending state
+    setModels(prevModels => prevModels.map(model => ({
       ...model,
       status: "pending",
       progress: 0,
       message: "Waiting to start..."
     })));
     
-    const maxConcurrent = 2;
-    const activeTrainings: Promise<void>[] = [];
+    // Create a Map to track promises by model ID
+    const activeTrainings = new Map<string, Promise<void>>();
     const activeModelIds: string[] = [];
     
-    while (trainingQueue.length > 0 || activeTrainings.length > 0) {
-      while (trainingQueue.length > 0 && activeTrainings.length < maxConcurrent) {
-        const modelToTrain = trainingQueue.shift();
-        if (modelToTrain) {
-          activeModelIds.push(modelToTrain.id);
-          setCurrentlyTraining([...activeModelIds]);
-          
-          const trainingPromise = trainModel(modelToTrain).finally(() => {
-            const index = activeModelIds.indexOf(modelToTrain.id);
-            if (index !== -1) {
-              activeModelIds.splice(index, 1);
-              setCurrentlyTraining([...activeModelIds]);
-            }
-          });
-          
-          activeTrainings.push(trainingPromise);
-        }
-      }
+    // Process all models
+    for (const modelToTrain of trainingQueue) {
+      // Start training the model 
+      const trainingPromise = trainModel(modelToTrain.id);
       
-      if (activeTrainings.length > 0) {
-        const completedIndex = await Promise.race(
-          activeTrainings.map((p, i) => p.then(() => i))
-        );
-        
-        activeTrainings.splice(completedIndex, 1);
-      } else {
-        break; // Exit the loop if there are no active trainings
-      }
+      // Store the promise in our Map
+      activeTrainings.set(modelToTrain.id, trainingPromise);
+      
+      // Mark model as currently training
+      activeModelIds.push(modelToTrain.id);
+      setCurrentlyTraining([...activeModelIds]);
     }
     
+    // Wait for all models to complete training
+    await Promise.all(Array.from(activeTrainings.values()));
+    
+    setCurrentlyTraining([]);
     setTrainingComplete(true);
     toast.success("All model training complete!");
   };
 
-  const trainModel = async (model: ModelConfig): Promise<void> => {
+  const trainModel = async (modelId: string): Promise<void> => {
+    const model = models.find(m => m.id === modelId);
+    if (!model) return;
+    
     try {
       updateModelConfig(model.id, { 
         status: "training", 
@@ -169,6 +161,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
           const newProgress = progressData.percent || 0;
           const message = progressData.message || progressData.stage || "Processing...";
           
+          // Update this specific model's progress
           updateModelConfig(model.id, { 
             progress: newProgress,
             message: message
@@ -183,7 +176,12 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         message: "Training complete"
       });
       
-      if (currentlyTraining.length <= 1 && currentlyTraining[0] === model.id) {
+      // Only update the predictions if this is the last model to complete
+      const remainingTraining = models.filter(m => 
+        m.id !== model.id && m.status !== "complete" && m.status !== "error"
+      );
+      
+      if (remainingTraining.length === 0) {
         onPredictionComplete(result.predictions);
       }
     } catch (error) {
@@ -357,7 +355,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
           {currentlyTraining.length > 0 ? (
             <Button disabled>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Training in progress...
+              Training in progress... ({currentlyTraining.length} models)
             </Button>
           ) : trainingComplete ? (
             <Button onClick={() => setOpen(false)}>

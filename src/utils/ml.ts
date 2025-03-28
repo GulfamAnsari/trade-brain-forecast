@@ -5,7 +5,7 @@ const SERVER_URL = "http://localhost:5000/api";
 const WS_URL = "ws://localhost:5000";
 
 let websocket: WebSocket | null = null;
-let messageHandlers: Set<(data: any) => void> = new Set();
+let messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
 
 export const initializeWebSocket = () => {
   if (websocket?.readyState === WebSocket.OPEN) {
@@ -20,8 +20,18 @@ export const initializeWebSocket = () => {
   
   websocket.onmessage = (event) => {
     try {
-      const data = JSON.parse(event.data);
-      messageHandlers.forEach(handler => handler(data));
+      const message = JSON.parse(event.data);
+      const modelId = message.modelId || 'global';
+      
+      // Handle messages for specific models
+      if (messageHandlers.has(modelId)) {
+        messageHandlers.get(modelId)?.forEach(handler => handler(message));
+      }
+      
+      // Always send to global handlers as well
+      if (modelId !== 'global' && messageHandlers.has('global')) {
+        messageHandlers.get('global')?.forEach(handler => handler(message));
+      }
     } catch (error) {
       console.error('WebSocket message parsing error:', error);
     }
@@ -39,12 +49,28 @@ export const initializeWebSocket = () => {
   return websocket;
 };
 
-export const addWebSocketHandler = (handler: (data: any) => void) => {
+export const addWebSocketHandler = (handler: (data: any) => void, modelId?: string) => {
   if (!websocket) {
     initializeWebSocket();
   }
-  messageHandlers.add(handler);
-  return () => messageHandlers.delete(handler);
+  
+  const id = modelId || 'global';
+  
+  if (!messageHandlers.has(id)) {
+    messageHandlers.set(id, new Set());
+  }
+  
+  messageHandlers.get(id)?.add(handler);
+  
+  return () => {
+    const handlers = messageHandlers.get(id);
+    if (handlers) {
+      handlers.delete(handler);
+      if (handlers.size === 0) {
+        messageHandlers.delete(id);
+      }
+    }
+  };
 };
 
 export const initializeTensorFlow = async () => {
@@ -69,7 +95,8 @@ export const analyzeStock = async (
   batchSize: number,
   daysToPredict: number,
   onProgress: (progress: any) => void,
-  signal: AbortSignal
+  signal: AbortSignal,
+  modelId?: string
 ): Promise<{
   modelData: any;
   predictions: PredictionResult[];
@@ -77,10 +104,11 @@ export const analyzeStock = async (
   try {
     // Add WebSocket handler for progress updates
     const removeHandler = addWebSocketHandler((message) => {
-      if (message.type === 'progress' || message.type === 'status') {
+      if ((message.type === 'progress' || message.type === 'status') && 
+          (message.modelId === modelId || (!modelId && !message.modelId))) {
         onProgress(message.data);
       }
-    });
+    }, modelId);
     
     // Make a deep copy of the stock data to avoid reference issues
     const stockDataCopy = {
@@ -103,7 +131,8 @@ export const analyzeStock = async (
         sequenceLength,
         epochs,
         batchSize,
-        daysToPredict
+        daysToPredict,
+        modelId
       }),
       signal
     });

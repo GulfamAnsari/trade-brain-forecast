@@ -45,9 +45,12 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Broadcast to all connected clients
-const broadcast = (message) => {
-  const data = JSON.stringify(message);
+// Broadcast to all connected clients with model ID context
+const broadcast = (message, modelId = null) => {
+  // Add model ID to the message payload if provided
+  const dataToSend = modelId ? { ...message, modelId } : message;
+  const data = JSON.stringify(dataToSend);
+  
   clients.forEach(client => {
     if (client.readyState === 1) { // OPEN
       client.send(data);
@@ -106,21 +109,21 @@ app.get('/api/models', (req, res) => {
 // Combined train and predict endpoint
 app.post('/api/analyze', async (req, res) => {
   try {
-    const { stockData, sequenceLength, epochs, batchSize, daysToPredict } = req.body;
+    const { stockData, sequenceLength, epochs, batchSize, daysToPredict, modelId } = req.body;
     
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
     }
     
     console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
-    console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}`);
+    console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}, modelId=${modelId || 'none'}`);
     
-    // Setup progress callback
+    // Setup progress callback with model ID context
     const onProgress = (progress) => {
       broadcast({
         type: 'progress',
         data: progress
-      });
+      }, modelId);
     };
     
     // Initial status
@@ -131,7 +134,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'init',
         params: { sequenceLength, epochs, batchSize, daysToPredict }
       }
-    });
+    }, modelId);
     
     // Train the model and get predictions
     const result = await trainAndPredict(
@@ -151,7 +154,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'complete',
         modelInfo: result.modelData
       }
-    });
+    }, modelId);
     
     res.json({
       modelData: result.modelData,
@@ -159,6 +162,9 @@ app.post('/api/analyze', async (req, res) => {
     });
   } catch (error) {
     console.error('Analysis error:', error);
+    
+    // Get the model ID from the request body
+    const modelId = req.body?.modelId;
     
     // Error status
     broadcast({
@@ -168,7 +174,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'error',
         error: error.toString()
       }
-    });
+    }, modelId);
     
     res.status(500).json({ error: error.message || 'Failed to analyze stock data' });
   }
@@ -203,7 +209,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
       broadcast({
         type: 'progress',
         data: { ...progress, modelId }
-      });
+      }, modelId);
     };
     
     // Initial status
@@ -214,7 +220,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
         stage: 'init',
         modelId
       }
-    });
+    }, modelId);
     
     // Remove any extra properties before loading the model
     const cleanStockData = {
@@ -248,7 +254,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
         modelId,
         modelInfo: result.modelData
       }
-    });
+    }, modelId);
     
     res.json({
       modelData: result.modelData,
@@ -266,7 +272,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
         stage: 'error',
         error: error.toString()
       }
-    });
+    }, req.params?.modelId);
     
     res.status(500).json({ error: error.message || 'Failed to make prediction' });
   }

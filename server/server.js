@@ -30,6 +30,9 @@ app.get('/api/status', (req, res) => {
 // Track active WebSocket connections
 const clients = new Set();
 
+// Track active training sessions to limit concurrent processing
+const activeTrainingSessions = new Map();
+
 // WebSocket connection handler
 wss.on('connection', (ws) => {
   console.log('WebSocket client connected');
@@ -106,6 +109,36 @@ app.get('/api/models', (req, res) => {
   }
 });
 
+// Delete a model
+app.delete('/api/models/:modelId', async (req, res) => {
+  try {
+    const { modelId } = req.params;
+    if (!modelId) {
+      return res.status(400).json({ error: 'Model ID is required' });
+    }
+    
+    const modelsDir = path.join(process.cwd(), 'models');
+    const modelPath = path.join(modelsDir, modelId);
+    
+    if (!fs.existsSync(modelPath)) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+    
+    // Remove active training sessions if this model is being trained
+    if (activeTrainingSessions.has(modelId)) {
+      activeTrainingSessions.delete(modelId);
+    }
+    
+    // Delete the model directory and all its contents
+    fs.rmSync(modelPath, { recursive: true, force: true });
+    
+    res.json({ success: true, message: 'Model deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting model:', error);
+    res.status(500).json({ error: 'Failed to delete model' });
+  }
+});
+
 // Combined train and predict endpoint
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -117,6 +150,19 @@ app.post('/api/analyze', async (req, res) => {
     
     console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
     console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}, modelId=${modelId || 'none'}`);
+    
+    // Limit concurrent training sessions
+    const maxConcurrentTraining = 5; // Allow 5 concurrent trainings
+    if (activeTrainingSessions.size >= maxConcurrentTraining) {
+      return res.status(429).json({ 
+        error: 'Too many concurrent training sessions. Please try again later.',
+        maxConcurrent: maxConcurrentTraining,
+        active: activeTrainingSessions.size
+      });
+    }
+    
+    // Add to active training sessions
+    activeTrainingSessions.set(modelId, Date.now());
     
     // Setup progress callback with model ID context
     const onProgress = (progress) => {
@@ -147,6 +193,9 @@ app.post('/api/analyze', async (req, res) => {
       modelId
     );
     
+    // Remove from active training sessions
+    activeTrainingSessions.delete(modelId);
+    
     // Final status
     broadcast({
       type: 'status',
@@ -166,6 +215,11 @@ app.post('/api/analyze', async (req, res) => {
     
     // Get the model ID from the request body
     const modelId = req.body?.modelId;
+    
+    // Remove from active training sessions on error
+    if (modelId) {
+      activeTrainingSessions.delete(modelId);
+    }
     
     // Error status
     broadcast({

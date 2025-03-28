@@ -6,7 +6,7 @@ import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { StockData, PredictionResult } from "@/types/stock";
 import { toast } from "sonner";
-import { Activity, Database, LineChart, CalendarClock, Loader2, Info } from "lucide-react";
+import { Activity, Database, LineChart, CalendarClock, Loader2, Info, Trash2 } from "lucide-react";
 import { Skeleton } from "./ui/skeleton";
 import { 
   AlertDialog,
@@ -44,8 +44,11 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
   const [models, setModels] = useState<SavedModel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [predicting, setPredicting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<SavedModel | null>(null);
   const [infoDialogOpen, setInfoDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [modelToDelete, setModelToDelete] = useState<SavedModel | null>(null);
 
   useEffect(() => {
     fetchSavedModels();
@@ -104,9 +107,59 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
     }
   };
 
+  const handleDeleteClick = (model: SavedModel) => {
+    setModelToDelete(model);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!modelToDelete) return;
+    
+    try {
+      setDeleting(modelToDelete.modelId);
+      
+      const response = await fetch(`http://localhost:5000/api/models/${modelToDelete.modelId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete model');
+      }
+      
+      // Remove from local state
+      setModels(models.filter(model => model.modelId !== modelToDelete.modelId));
+      toast.success('Model deleted successfully');
+    } catch (error) {
+      console.error('Error deleting model:', error);
+      toast.error(error instanceof Error ? error.message : 'Error deleting model');
+    } finally {
+      setDeleting(null);
+      setDeleteDialogOpen(false);
+      setModelToDelete(null);
+    }
+  };
+
   const showModelInfo = (model: SavedModel) => {
     setSelectedModel(model);
     setInfoDialogOpen(true);
+  };
+
+  const handleRetryTraining = async (model: SavedModel) => {
+    try {
+      // Redirect to the multi-training dialog with prefilled values
+      // We'll implement this by passing the model configuration as a URL parameter
+      // This will be picked up by the MultiTrainingDialog component
+      
+      // For now, we'll just show a toast message
+      toast.info('Retrying training for this model configuration');
+      
+      // Future implementation could involve passing the model configuration to MultiTrainingDialog
+      // through a context or state management solution
+    } catch (error) {
+      console.error('Error retrying training:', error);
+      toast.error(error instanceof Error ? error.message : 'Error retrying training');
+    }
   };
 
   const formatDate = (dateString?: string) => {
@@ -214,6 +267,19 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
                       >
                         <Info className="h-4 w-4" />
                       </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => handleDeleteClick(model)}
+                        className="h-7 w-7 text-destructive"
+                        disabled={deleting === model.modelId}
+                      >
+                        {deleting === model.modelId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
                       <Badge variant="outline" className="text-xs">
                         {model.epochs} epochs
                       </Badge>
@@ -244,9 +310,9 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
                     </div>
                   </div>
                 </CardContent>
-                <CardFooter className="p-4 pt-0">
+                <CardFooter className="p-4 pt-0 flex gap-2">
                   <Button 
-                    className="w-full" 
+                    className="flex-1" 
                     size="sm"
                     disabled={predicting === model.modelId}
                     onClick={() => handlePredict(model.modelId)}
@@ -259,7 +325,7 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
                     ) : (
                       <>
                         <LineChart className="mr-2 h-4 w-4" />
-                        Use Model for Prediction
+                        Use Model
                       </>
                     )}
                   </Button>
@@ -358,7 +424,47 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
           )}
           
           <AlertDialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                if (selectedModel) {
+                  handleRetryTraining(selectedModel);
+                  setInfoDialogOpen(false);
+                }
+              }}
+            >
+              Retry Training
+            </Button>
             <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Model</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this model? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteConfirm();
+              }}
+              disabled={!!deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : 'Delete'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

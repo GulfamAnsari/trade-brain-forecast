@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { StockData, PredictionResult } from "@/types/stock";
-import { BrainCircuit, Plus, Minus, Loader2 } from "lucide-react";
+import { BrainCircuit, Plus, Minus, Loader2, RefreshCw } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
@@ -67,6 +67,14 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   const [currentlyTraining, setCurrentlyTraining] = useState<string[]>([]);
   const [trainingComplete, setTrainingComplete] = useState(false);
   const [lastCompletedModelPredictions, setLastCompletedModelPredictions] = useState<PredictionResult[] | null>(null);
+  const [activeTab, setActiveTab] = useState("configure");
+  
+  // Auto-switch to status tab when training starts
+  useEffect(() => {
+    if (currentlyTraining.length > 0) {
+      setActiveTab("status");
+    }
+  }, [currentlyTraining.length]);
   
   const handleAddModel = () => {
     setModels([
@@ -211,6 +219,24 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
     }
   };
 
+  const handleRetryModel = async (modelId: string) => {
+    const model = models.find(m => m.id === modelId);
+    if (!model || model.status !== "error") return;
+    
+    // Reset the model's status
+    updateModelConfig(modelId, {
+      status: "pending",
+      progress: 0,
+      message: "Waiting to restart..."
+    });
+    
+    // Add to currently training state
+    setCurrentlyTraining(prev => [...prev, modelId]);
+    
+    // Start training the model
+    await trainModel(modelId);
+  };
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -227,7 +253,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
           </DialogDescription>
         </DialogHeader>
         
-        <Tabs defaultValue="configure" className="w-full">
+        <Tabs defaultValue="configure" value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid grid-cols-2 mb-4">
             <TabsTrigger value="configure">Configure Models</TabsTrigger>
             <TabsTrigger value="status">Training Status</TabsTrigger>
@@ -351,6 +377,28 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       </div>
                       <Progress value={model.progress} className="h-2" />
                       <p className="text-xs text-muted-foreground">{model.message}</p>
+                      
+                      {model.status === "error" && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-2 w-full"
+                          onClick={() => handleRetryModel(model.id)}
+                          disabled={currentlyTraining.includes(model.id)}
+                        >
+                          {currentlyTraining.includes(model.id) ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Retrying...
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Retry Training
+                            </>
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

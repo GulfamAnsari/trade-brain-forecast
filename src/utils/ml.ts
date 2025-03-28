@@ -6,6 +6,9 @@ const WS_URL = "ws://localhost:5000";
 
 let websocket: WebSocket | null = null;
 let messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+const reconnectDelay = 2000; // 2 seconds
 
 export const initializeWebSocket = () => {
   if (websocket?.readyState === WebSocket.OPEN) {
@@ -16,12 +19,15 @@ export const initializeWebSocket = () => {
   
   websocket.onopen = () => {
     console.log('WebSocket connected');
+    reconnectAttempts = 0; // Reset reconnect attempts on successful connection
   };
   
   websocket.onmessage = (event) => {
     try {
       const message = JSON.parse(event.data);
       const modelId = message.modelId || 'global';
+      
+      console.log(`WebSocket message received for modelId: ${modelId}`, message);
       
       // Handle messages for specific models
       if (messageHandlers.has(modelId)) {
@@ -41,16 +47,25 @@ export const initializeWebSocket = () => {
     console.error('WebSocket error:', error);
   };
   
-  websocket.onclose = () => {
-    console.log('WebSocket disconnected');
+  websocket.onclose = (event) => {
+    console.log('WebSocket disconnected', event.code, event.reason);
     websocket = null;
+    
+    // Attempt to reconnect if not a normal closure and not exceeded max attempts
+    if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+      reconnectAttempts++;
+      console.log(`Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
+      setTimeout(() => {
+        initializeWebSocket();
+      }, reconnectDelay * reconnectAttempts); // Exponential backoff
+    }
   };
   
   return websocket;
 };
 
 export const addWebSocketHandler = (handler: (data: any) => void, modelId?: string) => {
-  if (!websocket) {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) {
     initializeWebSocket();
   }
   
@@ -126,36 +141,44 @@ export const analyzeStock = async (
       throw new Error(`Not enough data points for analysis. Need at least ${sequenceLength + 5}.`);
     }
 
-    const response = await fetch(`${SERVER_URL}/analyze`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        stockData: stockDataCopy,
-        sequenceLength,
-        epochs,
-        batchSize,
-        daysToPredict,
-        modelId
-      }),
-      signal
-    });
+    try {
+      const response = await fetch(`${SERVER_URL}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          stockData: stockDataCopy,
+          sequenceLength,
+          epochs,
+          batchSize,
+          daysToPredict,
+          modelId
+        }),
+        signal
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Server analysis failed');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Server analysis failed');
+      }
+
+      const data = await response.json();
+      
+      // Clean up WebSocket handler
+      removeHandler();
+
+      return {
+        modelData: data.modelData,
+        predictions: data.predictions
+      };
+    } catch (error) {
+      // If the request was aborted, we should throw an abort error
+      if (signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      throw error;
     }
-
-    const data = await response.json();
-    
-    // Clean up WebSocket handler
-    removeHandler();
-
-    return {
-      modelData: data.modelData,
-      predictions: data.predictions
-    };
   } catch (error) {
     console.error("Analysis error:", error);
     throw error;

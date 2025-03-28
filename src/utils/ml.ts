@@ -1,3 +1,4 @@
+
 import { StockData, PredictionResult } from "@/types/stock";
 
 const SERVER_URL = "http://localhost:5000/api";
@@ -120,6 +121,17 @@ export const initializeTensorFlow = async () => {
   }
 };
 
+// Helper to generate descriptive model ID with all parameters
+export const generateModelId = (
+  stockData: StockData,
+  sequenceLength: number,
+  epochs: number,
+  batchSize: number,
+  daysToPredict: number
+): string => {
+  return `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+};
+
 export const analyzeStock = async (
   stockData: StockData,
   sequenceLength: number,
@@ -134,18 +146,22 @@ export const analyzeStock = async (
   predictions: PredictionResult[];
 }> => {
   try {
+    // Generate a descriptive model ID if none is provided
+    const descriptiveModelId = modelId || 
+      generateModelId(stockData, sequenceLength, epochs, batchSize, daysToPredict);
+    
     // Add WebSocket handler specifically for this model ID
     const removeHandler = addWebSocketHandler((message) => {
       // Only process messages for this specific model or without a modelId
-      if (message.modelId === modelId || 
-         (!message.modelId && !modelId) || 
+      if (message.modelId === descriptiveModelId || 
+         (!message.modelId && !descriptiveModelId) || 
          (message.type === 'global')) {
         
         if (message.type === 'progress' || message.type === 'status') {
           onProgress(message.data);
         }
       }
-    }, modelId); // Register handler with the specific model ID
+    }, descriptiveModelId); // Register handler with the specific model ID
     
     // Make a deep copy of the stock data to avoid reference issues
     const stockDataCopy = {
@@ -170,7 +186,7 @@ export const analyzeStock = async (
           epochs,
           batchSize,
           daysToPredict,
-          modelId,
+          modelId: descriptiveModelId,
           // Add a flag to indicate this is part of multi-model training
           isMultiModel: activeModelTraining.size > 1
         }),

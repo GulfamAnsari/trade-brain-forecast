@@ -9,7 +9,7 @@ if (!fs.existsSync(modelsDir)) {
   fs.mkdirSync(modelsDir, { recursive: true });
 }
 
-export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress) {
+export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress, modelId) {
   if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
     throw new Error("Stock data is empty or invalid.");
   }
@@ -36,8 +36,13 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       dataPoints: trimmedData.length
     });
 
-    const modelKey = `${stockData.symbol}_${sequenceLength}_${daysToPredict}`;
-    const modelPath = path.join("models", `${modelKey}`);
+    // Generate a more descriptive model ID that includes all training parameters
+    // If a specific model ID is not provided by the caller
+    const generatedModelId = modelId || 
+      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${trimmedData.length}`;
+    
+    // Use the generated model ID
+    const modelPath = path.join("models", generatedModelId);
     let model;
     let shouldTrain = true;
     let savedMinPrice, savedRange, savedModelParams;
@@ -228,7 +233,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
           stage: "saved", 
           message: "Model saved successfully", 
           percent: 90,
-          modelId: modelKey,
+          modelId: generatedModelId,
           history: {
             loss: history.history.loss,
             val_loss: history.history.val_loss
@@ -334,13 +339,13 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       message: "Prediction complete!", 
       percent: 100,
       dataPoints: trimmedData.length,
-      modelId: modelKey
+      modelId: generatedModelId
     });
 
     return {
       predictions,
       modelData: {
-        modelId: modelKey,
+        modelId: generatedModelId,
         isExistingModel: !shouldTrain,
         min: minPrice,
         range: range,

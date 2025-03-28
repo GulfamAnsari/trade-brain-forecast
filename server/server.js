@@ -154,10 +154,14 @@ app.post('/api/analyze', async (req, res) => {
     console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}, modelId=${modelId || 'none'}`);
     console.log(`Is part of multi-model training: ${isMultiModel ? 'Yes' : 'No'}`);
     
+    // Generate a more descriptive model ID if none is provided
+    const descriptiveModelId = modelId || 
+      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+    
     // If this is part of a multi-model training, add to the tracking set
-    if (isMultiModel && modelId) {
-      multiModelSessions.add(modelId);
-      console.log(`Added ${modelId} to multi-model tracking. Current multi-models: ${multiModelSessions.size}`);
+    if (isMultiModel && descriptiveModelId) {
+      multiModelSessions.add(descriptiveModelId);
+      console.log(`Added ${descriptiveModelId} to multi-model tracking. Current multi-models: ${multiModelSessions.size}`);
     }
     
     // Limit concurrent training sessions
@@ -171,14 +175,14 @@ app.post('/api/analyze', async (req, res) => {
     }
     
     // Add to active training sessions
-    activeTrainingSessions.set(modelId, Date.now());
+    activeTrainingSessions.set(descriptiveModelId, Date.now());
     
     // Setup progress callback with model ID context
     const onProgress = (progress) => {
       broadcast({
         type: 'progress',
         data: progress
-      }, modelId); // Pass the modelId to ensure messages are tagged with the correct model
+      }, descriptiveModelId); // Pass the descriptiveModelId to ensure messages are tagged with the correct model
     };
     
     // Initial status
@@ -189,7 +193,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'init',
         params: { sequenceLength, epochs, batchSize, daysToPredict }
       }
-    }, modelId); // Tag with the specific model ID
+    }, descriptiveModelId); // Tag with the specific model ID
     
     // Train the model and get predictions
     const result = await trainAndPredict(
@@ -199,16 +203,16 @@ app.post('/api/analyze', async (req, res) => {
       batchSize, 
       daysToPredict,
       onProgress,
-      modelId
+      descriptiveModelId
     );
     
     // Remove from active training sessions
-    activeTrainingSessions.delete(modelId);
+    activeTrainingSessions.delete(descriptiveModelId);
     
     // Remove from multi-model tracking if applicable
-    if (multiModelSessions.has(modelId)) {
-      multiModelSessions.delete(modelId);
-      console.log(`Removed ${modelId} from multi-model tracking. Remaining multi-models: ${multiModelSessions.size}`);
+    if (multiModelSessions.has(descriptiveModelId)) {
+      multiModelSessions.delete(descriptiveModelId);
+      console.log(`Removed ${descriptiveModelId} from multi-model tracking. Remaining multi-models: ${multiModelSessions.size}`);
     }
     
     // Final status
@@ -219,7 +223,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'complete',
         modelInfo: result.modelData
       }
-    }, modelId);
+    }, descriptiveModelId);
     
     res.json({
       modelData: result.modelData,
@@ -228,17 +232,20 @@ app.post('/api/analyze', async (req, res) => {
   } catch (error) {
     console.error('Analysis error:', error);
     
-    // Get the model ID from the request body
-    const modelId = req.body?.modelId;
+    // Get the model ID from the request body or use the descriptive one we generated
+    const descriptiveModelId = req.body?.modelId || 
+      (req.body?.stockData ? 
+        `${req.body.stockData.symbol}_seq${req.body.sequenceLength}_pred${req.body.daysToPredict}_ep${req.body.epochs}_bs${req.body.batchSize}` : 
+        null);
     
     // Remove from active training sessions on error
-    if (modelId) {
-      activeTrainingSessions.delete(modelId);
+    if (descriptiveModelId) {
+      activeTrainingSessions.delete(descriptiveModelId);
       
       // Also remove from multi-model tracking if applicable
-      if (multiModelSessions.has(modelId)) {
-        multiModelSessions.delete(modelId);
-        console.log(`Removed ${modelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
+      if (multiModelSessions.has(descriptiveModelId)) {
+        multiModelSessions.delete(descriptiveModelId);
+        console.log(`Removed ${descriptiveModelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
       }
     }
     
@@ -250,7 +257,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'error',
         error: error.toString()
       }
-    }, modelId);
+    }, descriptiveModelId);
     
     res.status(500).json({ error: error.message || 'Failed to analyze stock data' });
   }

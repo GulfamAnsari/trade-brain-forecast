@@ -123,7 +123,7 @@ app.post('/api/analyze', async (req, res) => {
       broadcast({
         type: 'progress',
         data: progress
-      }, modelId);
+      }, modelId); // Pass the modelId to ensure messages are tagged with the correct model
     };
     
     // Initial status
@@ -134,7 +134,7 @@ app.post('/api/analyze', async (req, res) => {
         stage: 'init',
         params: { sequenceLength, epochs, batchSize, daysToPredict }
       }
-    }, modelId);
+    }, modelId); // Tag with the specific model ID
     
     // Train the model and get predictions
     const result = await trainAndPredict(
@@ -143,7 +143,8 @@ app.post('/api/analyze', async (req, res) => {
       epochs, 
       batchSize, 
       daysToPredict,
-      onProgress
+      onProgress,
+      modelId
     );
     
     // Final status
@@ -242,7 +243,8 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
       params.epochs || 100,
       params.batchSize || 32,
       params.outputSize || 30,
-      onProgress
+      onProgress,
+      modelId
     );
     
     // Final status

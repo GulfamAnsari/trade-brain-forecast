@@ -66,6 +66,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   ]);
   const [currentlyTraining, setCurrentlyTraining] = useState<string[]>([]);
   const [trainingComplete, setTrainingComplete] = useState(false);
+  const [lastCompletedModelPredictions, setLastCompletedModelPredictions] = useState<PredictionResult[] | null>(null);
   
   const handleAddModel = () => {
     setModels([
@@ -100,9 +101,10 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
 
   const handleTrainAll = async () => {
     setTrainingComplete(false);
+    setLastCompletedModelPredictions(null);
     
     // Clone the models array to avoid mutating state directly
-    const trainingQueue = [...models];
+    const modelQueue = [...models];
     
     // Reset all models to pending state
     setModels(prevModels => prevModels.map(model => ({
@@ -112,28 +114,26 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       message: "Waiting to start..."
     })));
     
-    // Create a Map to track promises by model ID
-    const activeTrainings = new Map<string, Promise<void>>();
-    const activeModelIds: string[] = [];
-    
-    // Process all models
-    for (const modelToTrain of trainingQueue) {
-      // Start training the model 
-      const trainingPromise = trainModel(modelToTrain.id);
+    // Start training all models in parallel
+    const trainingPromises = modelQueue.map(model => {
+      // Add to currently training state
+      setCurrentlyTraining(prev => [...prev, model.id]);
       
-      // Store the promise in our Map
-      activeTrainings.set(modelToTrain.id, trainingPromise);
-      
-      // Mark model as currently training
-      activeModelIds.push(modelToTrain.id);
-      setCurrentlyTraining([...activeModelIds]);
-    }
+      // Start training the model and return the promise
+      return trainModel(model.id);
+    });
     
-    // Wait for all models to complete training
-    await Promise.all(Array.from(activeTrainings.values()));
+    // Wait for all models to finish training
+    await Promise.all(trainingPromises);
     
     setCurrentlyTraining([]);
     setTrainingComplete(true);
+    
+    // If we have predictions from the last completed model, pass them up
+    if (lastCompletedModelPredictions) {
+      onPredictionComplete(lastCompletedModelPredictions);
+    }
+    
     toast.success("All model training complete!");
   };
 
@@ -151,6 +151,9 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       const abortController = new AbortController();
       updateModelConfig(model.id, { abortController });
       
+      // Generate a unique server-side model ID using the model.id
+      const serverModelId = `${stockData.symbol}_${model.id}_${Date.now()}`;
+      
       const result = await analyzeStock(
         stockData,
         model.sequenceLength,
@@ -158,16 +161,20 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         model.batchSize,
         model.daysToPredict,
         (progressData) => {
-          const newProgress = progressData.percent || 0;
-          const message = progressData.message || progressData.stage || "Processing...";
-          
-          // Update this specific model's progress
-          updateModelConfig(model.id, { 
-            progress: newProgress,
-            message: message
-          });
+          // Only update this specific model's progress
+          // Check if the received message is for this model
+          if (progressData) {
+            const newProgress = progressData.percent || 0;
+            const message = progressData.message || progressData.stage || "Processing...";
+            
+            updateModelConfig(model.id, { 
+              progress: newProgress,
+              message: message
+            });
+          }
         },
-        abortController.signal
+        abortController.signal,
+        serverModelId // Pass the model ID for server to track which model is being trained
       );
       
       updateModelConfig(model.id, { 
@@ -176,14 +183,12 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         message: "Training complete"
       });
       
-      // Only update the predictions if this is the last model to complete
-      const remainingTraining = models.filter(m => 
-        m.id !== model.id && m.status !== "complete" && m.status !== "error"
-      );
+      // Save the most recently completed model's predictions
+      setLastCompletedModelPredictions(result.predictions);
       
-      if (remainingTraining.length === 0) {
-        onPredictionComplete(result.predictions);
-      }
+      // Remove from currently training list
+      setCurrentlyTraining(prev => prev.filter(id => id !== model.id));
+      
     } catch (error) {
       console.error(`Training error for model ${model.id}:`, error);
       
@@ -200,6 +205,9 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
           message: error instanceof Error ? error.message : "Training failed" 
         });
       }
+      
+      // Remove from currently training list
+      setCurrentlyTraining(prev => prev.filter(id => id !== model.id));
     }
   };
 

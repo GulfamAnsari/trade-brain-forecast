@@ -28,7 +28,7 @@ export const initializeWebSocket = () => {
         messageHandlers.get(modelId)?.forEach(handler => handler(message));
       }
       
-      // Always send to global handlers as well
+      // Always send to global handlers as well, but only if this isn't already a global message
       if (modelId !== 'global' && messageHandlers.has('global')) {
         messageHandlers.get('global')?.forEach(handler => handler(message));
       }
@@ -102,13 +102,18 @@ export const analyzeStock = async (
   predictions: PredictionResult[];
 }> => {
   try {
-    // Add WebSocket handler for progress updates
+    // Add WebSocket handler specifically for this model ID
     const removeHandler = addWebSocketHandler((message) => {
-      if ((message.type === 'progress' || message.type === 'status') && 
-          (message.modelId === modelId || (!modelId && !message.modelId))) {
-        onProgress(message.data);
+      // Only process messages for this specific model or without a modelId
+      if (message.modelId === modelId || 
+         (!message.modelId && !modelId) || 
+         (message.type === 'global')) {
+        
+        if (message.type === 'progress' || message.type === 'status') {
+          onProgress(message.data);
+        }
       }
-    }, modelId);
+    }, modelId); // Register handler with the specific model ID
     
     // Make a deep copy of the stock data to avoid reference issues
     const stockDataCopy = {

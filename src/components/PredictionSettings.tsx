@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Settings } from "lucide-react";
 import { useForm } from "react-hook-form";

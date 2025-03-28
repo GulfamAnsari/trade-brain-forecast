@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
@@ -119,7 +120,17 @@ const StockView = () => {
             ) : null}
             
             {isLoading ? (
-              <></>
+              <div className="space-y-4">
+                <Skeleton className="h-10 w-2/3 mb-2" />
+                <Skeleton className="h-6 w-1/3 mb-8" />
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                  <Skeleton className="h-[320px] lg:col-span-2" />
+                  <Skeleton className="h-[320px]" />
+                </div>
+                
+                <Skeleton className="h-[300px] mb-8" />
+              </div>
             ) : stockData ? (
               <>
                 <StockDetails stockData={stockData} className="mb-8" />
@@ -150,12 +161,12 @@ const StockView = () => {
                       </TabsTrigger>
                     </TabsList>
                     
-                    {stockData && 
+                    {stockData && (
                       <MultiTrainingDialog 
                         stockData={stockData} 
                         onPredictionComplete={handlePredictionComplete} 
                       />
-                    }
+                    )}
                   </div>
                   
                   <TabsContent value="prediction" className="space-y-4">

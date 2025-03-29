@@ -261,6 +261,9 @@ app.post('/api/analyze', async (req, res) => {
     // Store worker reference for possible cancellation
     workers.set(descriptiveModelId, worker);
     
+    // Flag to ensure we only send one response
+    let responseSent = false;
+    
     // Handle progress messages from worker
     worker.on('message', (message) => {
       if (message.type === 'progress' || message.type === 'status') {
@@ -299,7 +302,8 @@ app.post('/api/analyze', async (req, res) => {
         }, descriptiveModelId);
         
         // If this was the response for the original request, send it back
-        if (message.originalRequest) {
+        if (message.originalRequest && !responseSent && !isMultiModel) {
+          responseSent = true;
           res.json({
             modelData: message.modelData,
             predictions: message.predictions
@@ -330,7 +334,8 @@ app.post('/api/analyze', async (req, res) => {
         }, descriptiveModelId);
         
         // If this was the response for the original request, send error
-        if (message.originalRequest) {
+        if (message.originalRequest && !responseSent && !isMultiModel) {
+          responseSent = true;
           res.status(500).json({ error: message.error || 'Failed to analyze stock data' });
         }
       }
@@ -360,7 +365,11 @@ app.post('/api/analyze', async (req, res) => {
         }
       }, descriptiveModelId);
       
-      res.status(500).json({ error: error.message || 'Failed to analyze stock data' });
+      // If this was the response for the original request, send error
+      if (!responseSent && !isMultiModel) {
+        responseSent = true;
+        res.status(500).json({ error: error.message || 'Failed to analyze stock data' });
+      }
     });
     
     worker.on('exit', (code) => {
@@ -387,19 +396,25 @@ app.post('/api/analyze', async (req, res) => {
             symbol: stockData.symbol
           }
         }, descriptiveModelId);
+        
+        // If this was the response for the original request, send error
+        if (!responseSent && !isMultiModel) {
+          responseSent = true;
+          res.status(500).json({ error: `Worker exited with code ${code}` });
+        }
       }
     });
     
-    // Don't wait for worker to complete if not the original requester
-    if (!isMultiModel) {
-      // Worker will send response when done
-    } else {
-      // For multi-model training, we don't need to wait for this specific model
+    // Don't wait for worker to complete if it's a multi-model request
+    if (isMultiModel) {
+      // For multi-model training, respond immediately
+      responseSent = true;
       res.json({ 
         status: 'Training started in background',
         modelId: descriptiveModelId
       });
     }
+    // For non-multi-model requests, the worker will send the response
     
   } catch (error) {
     console.error('Analysis error:', error);
@@ -436,7 +451,7 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// Fixed: Combined model prediction endpoint
+// Now let's fix the combine-models endpoint to ensure predictions are properly handled
 app.post('/api/combine-models', async (req, res) => {
   try {
     const { stockData, modelIds, method = 'average' } = req.body;
@@ -452,7 +467,6 @@ app.post('/api/combine-models', async (req, res) => {
     console.log(`Combining models with method: ${method}, models: ${modelIds.join(', ')}`);
     
     const modelsDir = path.join(process.cwd(), 'models');
-    const predictions = [];
     const modelErrors = [];
     const validModels = [];
     
@@ -491,10 +505,10 @@ app.post('/api/combine-models', async (req, res) => {
         const worker = new Worker('./worker.js', {
           workerData: {
             stockData: cleanStockData,
-            inputSize: params.inputSize || params.sequenceLength,
+            sequenceLength: params.inputSize || params.sequenceLength,
             epochs: params.epochs || 100,
             batchSize: params.batchSize || 32,
-            outputSize: params.outputSize || params.daysToPredict || 30,
+            daysToPredict: params.outputSize || params.daysToPredict || 30,
             descriptiveModelId: modelId,
             isPredictionOnly: true
           }

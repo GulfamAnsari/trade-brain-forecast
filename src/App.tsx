@@ -8,6 +8,7 @@ import NotFound from './pages/NotFound';
 import { Toaster } from './components/ui/toaster';
 import { initializeTensorFlow } from './utils/ml';
 import GlobalTrainingStatus from './components/GlobalTrainingStatus';
+import { initializeConfig } from './utils/config';
 import './App.css';
 
 function App() {
@@ -15,6 +16,9 @@ function App() {
   const [mlError, setMlError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Initialize theme from saved config
+    initializeConfig();
+    
     const init = async () => {
       try {
         const success = await initializeTensorFlow();

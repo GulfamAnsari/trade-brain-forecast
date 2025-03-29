@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -240,7 +241,8 @@ app.post('/api/analyze', async (req, res) => {
         message: 'Starting analysis',
         stage: 'init',
         params: { sequenceLength, epochs, batchSize, daysToPredict },
-        startTime: Date.now()
+        startTime: Date.now(),
+        symbol: stockData.symbol
       }
     }, descriptiveModelId);
     
@@ -262,6 +264,11 @@ app.post('/api/analyze', async (req, res) => {
     // Handle progress messages from worker
     worker.on('message', (message) => {
       if (message.type === 'progress' || message.type === 'status') {
+        // Add symbol to the message data
+        if (message.data && !message.data.symbol && stockData && stockData.symbol) {
+          message.data.symbol = stockData.symbol;
+        }
+        
         broadcast({
           type: message.type,
           data: message.data
@@ -286,7 +293,8 @@ app.post('/api/analyze', async (req, res) => {
           data: { 
             message: 'Analysis complete',
             stage: 'complete',
-            modelInfo: message.modelData
+            modelInfo: message.modelData,
+            symbol: stockData.symbol
           }
         }, descriptiveModelId);
         
@@ -316,7 +324,8 @@ app.post('/api/analyze', async (req, res) => {
           data: { 
             message: message.error || 'Failed to analyze stock data',
             stage: 'error',
-            error: message.error
+            error: message.error,
+            symbol: stockData.symbol
           }
         }, descriptiveModelId);
         
@@ -346,7 +355,8 @@ app.post('/api/analyze', async (req, res) => {
         data: { 
           message: error.message || 'Failed to analyze stock data',
           stage: 'error',
-          error: error.toString()
+          error: error.toString(),
+          symbol: stockData.symbol
         }
       }, descriptiveModelId);
       
@@ -373,7 +383,8 @@ app.post('/api/analyze', async (req, res) => {
           data: { 
             message: `Worker exited unexpectedly with code ${code}`,
             stage: 'error',
-            error: `Worker exited with code ${code}`
+            error: `Worker exited with code ${code}`,
+            symbol: stockData.symbol
           }
         }, descriptiveModelId);
       }
@@ -425,13 +436,8 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// Predict using a specific model ID
-app.post('/api/models/:modelId/predict', async (req, res) => {
-  // ... keep existing code
-});
-
-// Combined model prediction endpoint
-app.post('/api/models/combined-predict', async (req, res) => {
+// Fixed: Combined model prediction endpoint
+app.post('/api/combine-models', async (req, res) => {
   try {
     const { stockData, modelIds, method = 'average' } = req.body;
     
@@ -442,6 +448,8 @@ app.post('/api/models/combined-predict', async (req, res) => {
     if (!modelIds || !Array.isArray(modelIds) || modelIds.length === 0) {
       return res.status(400).json({ error: 'No model IDs provided' });
     }
+    
+    console.log(`Combining models with method: ${method}, models: ${modelIds.join(', ')}`);
     
     const modelsDir = path.join(process.cwd(), 'models');
     const predictions = [];
@@ -483,10 +491,10 @@ app.post('/api/models/combined-predict', async (req, res) => {
         const worker = new Worker('./worker.js', {
           workerData: {
             stockData: cleanStockData,
-            inputSize: params.inputSize || 0,
+            inputSize: params.inputSize || params.sequenceLength,
             epochs: params.epochs || 100,
             batchSize: params.batchSize || 32,
-            outputSize: params.outputSize || 30,
+            outputSize: params.outputSize || params.daysToPredict || 30,
             descriptiveModelId: modelId,
             isPredictionOnly: true
           }
@@ -628,8 +636,10 @@ app.post('/api/models/combined-predict', async (req, res) => {
       }
     }
     
+    console.log(`Combined ${validModels.length} models using ${method} method. Generated ${combinedPredictions.length} predictions.`);
+    
     res.json({
-      combinedPredictions,
+      predictions: combinedPredictions,
       method,
       usedModels: validModels.map(m => m.modelId),
       modelErrors: modelErrors.length > 0 ? modelErrors : undefined
@@ -641,8 +651,50 @@ app.post('/api/models/combined-predict', async (req, res) => {
   }
 });
 
-// Create a combo training endpoint for batch training with multiple configurations
-app.post('/api/combo-train', async (req, res) => {
+// Cancel training endpoint
+app.post('/api/cancel-training', async (req, res) => {
+  try {
+    const { modelId } = req.body;
+    
+    if (!modelId) {
+      return res.status(400).json({ error: 'Model ID is required' });
+    }
+    
+    if (!workers.has(modelId)) {
+      return res.status(404).json({ error: 'No active training found for this model' });
+    }
+    
+    // Terminate the worker
+    const worker = workers.get(modelId);
+    worker.terminate();
+    
+    // Remove from tracking
+    workers.delete(modelId);
+    activeTrainingSessions.delete(modelId);
+    
+    // Remove from multi-model tracking if applicable
+    if (multiModelSessions.has(modelId)) {
+      multiModelSessions.delete(modelId);
+    }
+    
+    // Notify clients
+    broadcast({
+      type: 'status',
+      data: { 
+        message: 'Training cancelled by user',
+        stage: 'cancelled'
+      }
+    }, modelId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error cancelling training:', error);
+    res.status(500).json({ error: error.message || 'Failed to cancel training' });
+  }
+});
+
+// Combo training endpoint
+app.post('/api/combo-training', async (req, res) => {
   try {
     const { stockData, configurations } = req.body;
     
@@ -716,7 +768,8 @@ app.post('/api/combo-train', async (req, res) => {
           },
           jobIndex: job.index,
           totalJobs: trainingJobs.length,
-          startTime: Date.now()
+          startTime: Date.now(),
+          symbol: stockData.symbol
         }
       }, job.modelId);
       
@@ -744,7 +797,8 @@ app.post('/api/combo-train', async (req, res) => {
           const progressData = {
             ...message.data,
             jobIndex: job.index,
-            totalJobs: trainingJobs.length
+            totalJobs: trainingJobs.length,
+            symbol: stockData.symbol
           };
           
           broadcast({
@@ -767,7 +821,8 @@ app.post('/api/combo-train', async (req, res) => {
               stage: 'complete',
               modelInfo: message.modelData,
               jobIndex: job.index,
-              totalJobs: trainingJobs.length
+              totalJobs: trainingJobs.length,
+              symbol: stockData.symbol
             }
           }, job.modelId);
           
@@ -792,7 +847,8 @@ app.post('/api/combo-train', async (req, res) => {
               stage: 'error',
               error: message.error,
               jobIndex: job.index,
-              totalJobs: trainingJobs.length
+              totalJobs: trainingJobs.length,
+              symbol: stockData.symbol
             }
           }, job.modelId);
           
@@ -821,7 +877,8 @@ app.post('/api/combo-train', async (req, res) => {
             stage: 'error',
             error: error.toString(),
             jobIndex: job.index,
-            totalJobs: trainingJobs.length
+            totalJobs: trainingJobs.length,
+            symbol: stockData.symbol
           }
         }, job.modelId);
         
@@ -850,7 +907,8 @@ app.post('/api/combo-train', async (req, res) => {
               stage: 'error',
               error: `Worker exited with code ${code}`,
               jobIndex: job.index,
-              totalJobs: trainingJobs.length
+              totalJobs: trainingJobs.length,
+              symbol: stockData.symbol
             }
           }, job.modelId);
           
@@ -890,6 +948,7 @@ app.post('/api/combo-train', async (req, res) => {
 app.get('/api/status', (req, res) => {
   res.status(200).json({ status: 'running' });
 });
+
 // Handle all other routes - serve the React app
 app.get('*', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'build', 'index.html'));

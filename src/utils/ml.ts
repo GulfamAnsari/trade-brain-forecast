@@ -1,3 +1,4 @@
+
 import { StockData, PredictionResult } from "@/types/stock";
 
 const SERVER_URL = "http://localhost:5000/api";
@@ -258,7 +259,7 @@ export const combinePredictions = async (
     const result = await response.json();
     
     return {
-      combinedPredictions: result.predictions,
+      combinedPredictions: result.predictions || result.combinedPredictions || [],
       usedModels: result.usedModels || modelIds,
       modelErrors: result.modelErrors || [],
       method: result.method || method

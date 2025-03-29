@@ -609,8 +609,8 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
               
             configurations.push({
               sequenceLength,
-              epochs: epoch,
-              batchSize,
+              epochs: parseInt(epoch.toString()),
+              batchSize: parseInt(batchSize.toString()),
               daysToPredict: comboConfig.daysToPredict
             });
           }
@@ -918,7 +918,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       <Badge
                         key={seqLength}
                         variant={comboConfig.selectedSequenceLengths.includes(seqLength) ? "default" : "outline"}
-                        className="cursor-pointer"
+                        className="cursor-pointer hover:bg-muted/50"
                         onClick={() => toggleComboOption('selectedSequenceLengths', seqLength)}
                       >
                         {seqLength}
@@ -933,8 +933,8 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                     {comboConfig.epochs.map((epoch) => (
                       <Badge
                         key={epoch}
-                        variant={comboConfig.selectedEpochs.includes(epoch) ? "default" : "outline"}
-                        className="cursor-pointer"
+                        variant={comboConfig.selectedEpochs.map(String).includes(String(epoch)) ? "default" : "outline"}
+                        className="cursor-pointer hover:bg-muted/50"
                         onClick={() => toggleComboOption('selectedEpochs', epoch)}
                       >
                         {epoch}
@@ -949,8 +949,8 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                     {comboConfig.batchSizes.map((batchSize) => (
                       <Badge
                         key={batchSize}
-                        variant={comboConfig.selectedBatchSizes.includes(batchSize) ? "default" : "outline"}
-                        className="cursor-pointer"
+                        variant={comboConfig.selectedBatchSizes.map(String).includes(String(batchSize)) ? "default" : "outline"}
+                        className="cursor-pointer hover:bg-muted/50"
                         onClick={() => toggleComboOption('selectedBatchSizes', batchSize)}
                       >
                         {batchSize}
@@ -1000,7 +1000,7 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                   </div>
                 ) : (
                   comboJobs.map((job, index) => (
-                    <Card key={job.modelId} className="overflow-hidden">
+                    <Card key={job.modelId || index} className="overflow-hidden">
                       <CardHeader className="p-4 pb-2">
                         <div className="flex justify-between items-center">
                           <CardTitle className="text-base">

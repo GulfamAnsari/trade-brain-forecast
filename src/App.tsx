@@ -1,52 +1,45 @@
 
-import { useEffect } from "react";
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { initializeConfig } from "@/utils/config";
-import { initializeTensorFlow } from "@/utils/ml";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import StockView from "./pages/StockView";
-import FavoritesPage from "./pages/FavoritesPage";
+import { useEffect, useState } from 'react';
+import { Route, Routes, BrowserRouter } from 'react-router-dom';
+import Index from './pages/Index';
+import StockView from './pages/StockView';
+import FavoritesPage from './pages/FavoritesPage';
+import NotFound from './pages/NotFound';
+import { Toaster } from './components/ui/toaster';
+import { initializeTensorFlow } from './utils/ml';
+import GlobalTrainingStatus from './components/GlobalTrainingStatus';
+import './App.css';
 
-// Initialize app configuration on app load
-initializeConfig();
+function App() {
+  const [isMlInitialized, setIsMlInitialized] = useState(false);
+  const [mlError, setMlError] = useState<string | null>(null);
 
-// Initialize TensorFlow when app loads
-initializeTensorFlow().catch(err => {
-  console.error("Failed to initialize TensorFlow:", err);
-});
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const success = await initializeTensorFlow();
+        setIsMlInitialized(success);
+      } catch (error) {
+        console.error('Failed to initialize ML:', error);
+        setMlError(error instanceof Error ? error.message : 'Unknown error');
+      }
+    };
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      gcTime: 10 * 60 * 1000, // 10 minutes (replaces cacheTime)
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+    init();
+  }, []);
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
+  return (
     <BrowserRouter>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/favorites" element={<FavoritesPage />} />
-          <Route path="/stock/:symbol" element={<StockView />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </TooltipProvider>
+      <Routes>
+        <Route path="/" element={<Index />} />
+        <Route path="/stock/:symbol" element={<StockView />} />
+        <Route path="/favorites" element={<FavoritesPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+      <Toaster />
+      <GlobalTrainingStatus />
     </BrowserRouter>
-  </QueryClientProvider>
-);
+  );
+}
 
 export default App;

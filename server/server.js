@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -160,6 +159,95 @@ app.get('/api/models', (req, res) => {
   } catch (error) {
     console.error('Error retrieving models:', error);
     res.status(500).json({ error: 'Failed to retrieve models' });
+  }
+});
+
+// Add a new endpoint for model predictions
+app.post('/api/models/:modelId/predict', async (req, res) => {
+  try {
+    const { modelId } = req.params;
+    const { stockData } = req.body;
+    
+    if (!modelId) {
+      return res.status(400).json({ error: 'Model ID is required' });
+    }
+    
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
+      return res.status(400).json({ error: 'Invalid stock data provided' });
+    }
+    
+    console.log(`Making prediction with model ${modelId} for ${stockData.symbol}`);
+    
+    const modelsDir = path.join(process.cwd(), 'models');
+    const modelPath = path.join(modelsDir, modelId);
+    
+    if (!fs.existsSync(path.join(modelPath, 'model.json'))) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+    
+    const paramsPath = path.join(modelPath, 'params.json');
+    if (!fs.existsSync(paramsPath)) {
+      return res.status(404).json({ error: 'Model parameters not found' });
+    }
+    
+    // Clean stock data to avoid circular references
+    const cleanStockData = {
+      ...stockData,
+      timeSeries: stockData.timeSeries.map(item => ({
+        date: item.date,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: item.volume
+      }))
+    };
+    
+    const params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
+    
+    // Create a worker for prediction
+    const worker = new Worker('./worker.js', {
+      workerData: {
+        stockData: cleanStockData,
+        sequenceLength: params.inputSize || params.sequenceLength,
+        epochs: params.epochs || 100,
+        batchSize: params.batchSize || 32,
+        daysToPredict: params.outputSize || params.daysToPredict || 30,
+        descriptiveModelId: modelId,
+        isPredictionOnly: true
+      }
+    });
+    
+    // Wait for prediction result
+    worker.on('message', (message) => {
+      if (message.type === 'complete') {
+        res.json({
+          predictions: message.predictions || [],
+          modelId: modelId
+        });
+      } else if (message.type === 'error') {
+        res.status(500).json({ error: message.error || 'Failed to make prediction' });
+      }
+    });
+    
+    worker.on('error', (error) => {
+      console.error(`Error predicting with model ${modelId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to make prediction' });
+    });
+    
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        console.error(`Worker exited with code ${code} for prediction with model ${modelId}`);
+        // Only send error if response hasn't been sent yet
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Worker exited with code ${code}` });
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Prediction error:', error);
+    res.status(500).json({ error: error.message || 'Failed to make prediction' });
   }
 });
 
@@ -469,6 +557,7 @@ app.post('/api/combine-models', async (req, res) => {
     const modelsDir = path.join(process.cwd(), 'models');
     const modelErrors = [];
     const validModels = [];
+    const predictionResults = [];
     
     // First, gather predictions from all models
     for (const modelId of modelIds) {
@@ -532,11 +621,17 @@ app.post('/api/combine-models', async (req, res) => {
           });
         });
         
-        validModels.push({
-          modelId,
-          params,
-          predictions: result.predictions
-        });
+        // Store model info and predictions
+        if (result.predictions && result.predictions.length > 0) {
+          validModels.push({
+            modelId,
+            params,
+            predictions: result.predictions
+          });
+          
+          // Add these predictions to our results array
+          predictionResults.push(...result.predictions);
+        }
         
       } catch (error) {
         console.error(`Error predicting with model ${modelId}:`, error);
@@ -651,6 +746,14 @@ app.post('/api/combine-models', async (req, res) => {
     }
     
     console.log(`Combined ${validModels.length} models using ${method} method. Generated ${combinedPredictions.length} predictions.`);
+    
+    // Ensure we have predictions to return
+    if (combinedPredictions.length === 0) {
+      return res.status(400).json({
+        error: 'Failed to generate combined predictions',
+        modelErrors
+      });
+    }
     
     res.json({
       predictions: combinedPredictions,

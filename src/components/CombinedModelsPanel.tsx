@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { 
@@ -66,9 +67,47 @@ const CombinedModelsPanel = ({ stockData, savedModels, onPredictionComplete }: C
     setError(null);
     
     try {
-      const result = await combinePredictions(stockData, selectedModels, combineMethod);
+      // Create a clean copy of the stock data to avoid circular references
+      const cleanStockData = {
+        ...stockData,
+        timeSeries: stockData.timeSeries.map(item => ({
+          date: item.date,
+          open: item.open,
+          high: item.high, 
+          low: item.low,
+          close: item.close,
+          volume: item.volume
+        }))
+      };
       
-      onPredictionComplete(result.combinedPredictions);
+      console.log(`Combining ${selectedModels.length} models using ${combineMethod} method`);
+      
+      const response = await fetch('http://localhost:5000/api/combine-models', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          stockData: cleanStockData,
+          modelIds: selectedModels,
+          method: combineMethod
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to combine models");
+      }
+      
+      const result = await response.json();
+      
+      console.log(`Combined models result:`, result);
+      
+      if (!result.predictions || result.predictions.length === 0) {
+        throw new Error("No predictions returned from combined models");
+      }
+      
+      onPredictionComplete(result.predictions);
       
       toast.success(
         `Combined ${result.usedModels.length} models using ${result.method} method`

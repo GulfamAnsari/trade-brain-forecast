@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
@@ -83,20 +82,41 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
   const handlePredict = async (modelId: string) => {
     try {
       setPredicting(modelId);
+      console.log(`Requesting prediction for model: ${modelId}`);
+      
+      // Make a clean copy of the stock data to avoid circular references
+      const cleanStockData = {
+        ...stockData,
+        timeSeries: stockData.timeSeries.map(item => ({
+          date: item.date,
+          open: item.open,
+          high: item.high, 
+          low: item.low,
+          close: item.close,
+          volume: item.volume
+        }))
+      };
       
       const response = await fetch(`http://localhost:5000/api/models/${modelId}/predict`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ stockData }),
+        body: JSON.stringify({ stockData: cleanStockData }),
       });
       
       if (!response.ok) {
-        throw new Error('Failed to make prediction');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to make prediction');
       }
       
       const result = await response.json();
+      
+      if (!result.predictions || result.predictions.length === 0) {
+        throw new Error('No predictions returned from model');
+      }
+      
+      console.log(`Prediction successful, received ${result.predictions.length} data points`);
       onModelSelect(modelId, result.predictions);
       toast.success('Prediction completed successfully');
     } catch (error) {

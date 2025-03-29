@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -550,12 +551,11 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   };
   
   const handleRetryComboJob = (modelId: string) => {
-    // We can't directly retry a combo job, so we'll create a new regular job with the same settings
     const job = comboJobs.find(job => job.modelId === modelId);
     if (!job) return;
     
     // Create a new model with the same settings
-    const newModel = {
+    const newModel: ModelConfig = {
       id: `model-${models.length + 1}`,
       sequenceLength: parseInt(job.config.sequenceLength),
       epochs: job.config.epochs,

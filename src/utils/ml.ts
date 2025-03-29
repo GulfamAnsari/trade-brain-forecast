@@ -1,4 +1,3 @@
-
 import { StockData, PredictionResult } from "@/types/stock";
 
 const SERVER_URL = "http://localhost:5000/api";
@@ -216,6 +215,154 @@ export const analyzeStock = async (
     }
   } catch (error) {
     console.error("Analysis error:", error);
+    throw error;
+  }
+};
+
+/**
+ * Combines predictions from multiple models using the specified method
+ */
+export const combinePredictions = async (
+  stockData: StockData,
+  modelIds: string[],
+  method: 'average' | 'weighted' | 'stacking' | 'bayesian'
+): Promise<{
+  combinedPredictions: PredictionResult[];
+  usedModels: string[];
+  modelErrors: string[];
+  method: string;
+}> => {
+  if (!modelIds || modelIds.length < 2) {
+    throw new Error("At least 2 models are required for combination");
+  }
+  
+  try {
+    // Request server to combine models
+    const response = await fetch(`${SERVER_URL}/combine-models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stockData,
+        modelIds,
+        method
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to combine models');
+    }
+
+    const result = await response.json();
+    
+    return {
+      combinedPredictions: result.predictions,
+      usedModels: result.usedModels || modelIds,
+      modelErrors: result.modelErrors || [],
+      method: result.method || method
+    };
+  } catch (error) {
+    console.error("Error combining model predictions:", error);
+    throw error;
+  }
+};
+
+/**
+ * Gets active training models
+ */
+export const getActiveTrainingModels = (): string[] => {
+  return Array.from(activeModelTraining);
+};
+
+/**
+ * Checks if a model is currently training
+ */
+export const isModelTraining = (modelId: string): boolean => {
+  return activeModelTraining.has(modelId);
+};
+
+/**
+ * Cancels model training
+ */
+export const cancelTraining = async (modelId: string): Promise<boolean> => {
+  try {
+    const response = await fetch(`${SERVER_URL}/cancel-training`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ modelId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to cancel training');
+    }
+
+    const result = await response.json();
+    
+    // Remove from local tracking
+    activeModelTraining.delete(modelId);
+    
+    return result.success;
+  } catch (error) {
+    console.error(`Error canceling model ${modelId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Starts combo training for multiple model configurations
+ */
+export const startComboTraining = async (
+  stockData: StockData, 
+  configurations: Array<{
+    sequenceLength: number;
+    epochs: number;
+    batchSize: number;
+    daysToPredict: number;
+  }>
+): Promise<{
+  success: boolean;
+  jobs: Array<{
+    modelId: string;
+    config: any;
+  }>;
+  totalJobs: number;
+}> => {
+  try {
+    const response = await fetch(`${SERVER_URL}/combo-training`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stockData,
+        configurations
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to start combo training');
+    }
+
+    const result = await response.json();
+    
+    // Track all jobs as active
+    if (result.jobs && Array.isArray(result.jobs)) {
+      result.jobs.forEach(job => {
+        if (job.modelId) {
+          activeModelTraining.add(job.modelId);
+        }
+      });
+    }
+    
+    return result;
+  } catch (error) {
+    console.error("Error starting combo training:", error);
     throw error;
   }
 };

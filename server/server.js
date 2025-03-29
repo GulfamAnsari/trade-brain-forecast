@@ -245,7 +245,7 @@ app.post('/api/analyze', async (req, res) => {
     }, descriptiveModelId);
     
     // Create a worker for this model training
-    const worker = new Worker('./server/worker.js', {
+    const worker = new Worker('./worker.js', {
       workerData: {
         stockData,
         sequenceLength,
@@ -480,7 +480,7 @@ app.post('/api/models/combined-predict', async (req, res) => {
         };
         
         // Create a worker for prediction
-        const worker = new Worker('./server/worker.js', {
+        const worker = new Worker('./worker.js', {
           workerData: {
             stockData: cleanStockData,
             inputSize: params.inputSize || 0,
@@ -721,7 +721,7 @@ app.post('/api/combo-train', async (req, res) => {
       }, job.modelId);
       
       // Create worker for this job
-      const worker = new Worker('./server/worker.js', {
+      const worker = new Worker('./worker.js', {
         workerData: {
           stockData,
           sequenceLength: job.sequenceLength,
@@ -887,6 +887,9 @@ app.post('/api/combo-train', async (req, res) => {
   }
 });
 
+app.get('/api/status', (req, res) => {
+  res.status(200).json({ status: 'running' });
+});
 // Handle all other routes - serve the React app
 app.get('*', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'build', 'index.html'));

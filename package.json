@@ -1,15 +1,16 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "lovable-project",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
-    "lint": "eslint .",
+    "build": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "server": "nodemon server/server.js"
+    "server": "cd server && nodemon server.js",
+    "dev:server": "cd server && nodemon server.js",
+    "build:full": "node build.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -43,6 +44,7 @@
     "@tanstack/react-query": "^5.56.2",
     "@tensorflow/tfjs": "^4.20.0",
     "@tensorflow/tfjs-node": "^4.20.0",
+    "@vitejs/plugin-react-swc": "^3.8.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
@@ -69,23 +71,20 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@eslint/js": "^9.9.0",
-    "@tailwindcss/typography": "^0.5.15",
-    "@types/node": "^22.5.5",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react-swc": "^3.5.0",
-    "autoprefixer": "^10.4.20",
-    "eslint": "^9.9.0",
-    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
-    "eslint-plugin-react-refresh": "^0.4.9",
-    "globals": "^15.9.0",
-    "lovable-tagger": "^1.1.7",
-    "nodemon": "^3.0.3",
-    "postcss": "^8.4.47",
-    "tailwindcss": "^3.4.11",
-    "typescript": "^5.5.3",
-    "typescript-eslint": "^8.0.1",
-    "vite": "^5.4.1"
+    "@types/node": "^20.4.0",
+    "@types/react": "^18.2.14",
+    "@types/react-dom": "^18.2.6",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.45.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.1",
+    "nodemon": "^3.1.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.3.3",
+    "typescript": "^5.0.2",
+    "vite": "^5.1.4"
   }
 }

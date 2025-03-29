@@ -1,374 +1,382 @@
+import { StockData, PredictionResult } from "@/types/stock";
 
-import * as tf from '@tensorflow/tfjs-node';
-import fs from 'fs';
-import path from 'path';
+const SERVER_URL = "http://localhost:5000/api";
+const WS_URL = "ws://localhost:5000";
 
-// Create models directory if it doesn't exist
-const modelsDir = path.join(process.cwd(), 'models');
-if (!fs.existsSync(modelsDir)) {
-  fs.mkdirSync(modelsDir, { recursive: true });
-}
+let websocket: WebSocket | null = null;
+let messageHandlers: Map<string, Set<(data: any) => void>> = new Map();
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+const reconnectDelay = 2000; // 2 seconds
+let activeModelTraining = new Set<string>(); // Track active model training
+let initialActiveModelsReceived = false;
 
-export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress, modelId) {
-  if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
-    throw new Error("Stock data is empty or invalid.");
+export const initializeWebSocket = () => {
+  if (websocket?.readyState === WebSocket.OPEN) {
+    return websocket;
   }
+  
+  websocket = new WebSocket(WS_URL);
+  
+  websocket.onopen = () => {
+    console.log('WebSocket connected');
+    reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+  };
+  
+  websocket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      const modelId = message.modelId || 'global';
+      
+      console.log(`WebSocket message received for modelId: ${modelId}`, message);
+      
+      // Handle active models list on first connection
+      if (message.type === 'activeModels' && !initialActiveModelsReceived) {
+        initialActiveModelsReceived = true;
+        message.data.forEach((model: any) => {
+          activeModelTraining.add(model.modelId);
+        });
+        console.log('Received active models on connection:', activeModelTraining);
+      }
+      
+      // Handle combo training started event
+      if (message.type === 'comboTrainingStarted') {
+        message.data.jobs.forEach((job: any) => {
+          activeModelTraining.add(job.modelId);
+        });
+        
+        // Let all global handlers know about this event
+        if (messageHandlers.has('global')) {
+          messageHandlers.get('global')?.forEach(handler => handler(message));
+        }
+      }
+      
+      // Keep track of completed models
+      if (message.type === 'status' && message.data) {
+        if (message.data.stage === 'complete' && modelId !== 'global') {
+          // Remove from active training when a model is complete
+          activeModelTraining.delete(modelId);
+          console.log(`Model ${modelId} completed, remaining active models: ${activeModelTraining.size}`);
+        } else if (message.data.stage === 'error' && modelId !== 'global') {
+          // Remove from active training when a model errors out
+          activeModelTraining.delete(modelId);
+          console.log(`Model ${modelId} errored, remaining active models: ${activeModelTraining.size}`);
+        } else if (message.data.stage === 'cancelled' && modelId !== 'global') {
+          // Remove from active training when a model is cancelled
+          activeModelTraining.delete(modelId);
+          console.log(`Model ${modelId} cancelled, remaining active models: ${activeModelTraining.size}`);
+        }
+      }
+      
+      // Handle messages for specific models
+      if (messageHandlers.has(modelId)) {
+        messageHandlers.get(modelId)?.forEach(handler => handler(message));
+      }
+      
+      // Always send to global handlers as well, but only if this isn't already a global message
+      if (modelId !== 'global' && messageHandlers.has('global')) {
+        messageHandlers.get('global')?.forEach(handler => handler(message));
+      }
+    } catch (error) {
+      console.error('WebSocket message parsing error:', error);
+    }
+  };
+  
+  websocket.onerror = (error) => {
+    console.error('WebSocket error:', error);
+  };
+  
+  websocket.onclose = (event) => {
+    console.log('WebSocket disconnected', event.code, event.reason);
+    websocket = null;
+    
+    // Attempt to reconnect if not a normal closure and not exceeded max attempts
+    if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+      reconnectAttempts++;
+      console.log(`Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`);
+      setTimeout(() => {
+        initializeWebSocket();
+      }, reconnectDelay * reconnectAttempts); // Exponential backoff
+    }
+  };
+  
+  return websocket;
+};
 
+export const addWebSocketHandler = (handler: (data: any) => void, modelId?: string) => {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+    initializeWebSocket();
+  }
+  
+  const id = modelId || 'global';
+  
+  if (!messageHandlers.has(id)) {
+    messageHandlers.set(id, new Set());
+  }
+  
+  messageHandlers.get(id)?.add(handler);
+  
+  // Track this model as active for training if it has a model ID
+  if (modelId && modelId !== 'global') {
+    activeModelTraining.add(modelId);
+  }
+  
+  return () => {
+    const handlers = messageHandlers.get(id);
+    if (handlers) {
+      handlers.delete(handler);
+      if (handlers.size === 0) {
+        messageHandlers.delete(id);
+      }
+    }
+    
+    // Note: We no longer automatically remove from active training when handler is removed
+    // This allows the UI to reconnect to ongoing training after page refresh
+  };
+};
+
+export const initializeTensorFlow = async () => {
   try {
-    onProgress({ stage: "starting", message: "Initializing model training...", percent: 5 });
-
-    // Sort data by date (ascending)
-    stockData.timeSeries.sort((a, b) => new Date(a.date) - new Date(b.date));
-    
-    // Use only the specified sequence length of data if provided
-    const trimmedData = sequenceLength > 0 && stockData.timeSeries.length > sequenceLength 
-      ? stockData.timeSeries.slice(-sequenceLength) 
-      : stockData.timeSeries;
-    
-    if (trimmedData.length < 5) {
-      throw new Error(`Not enough data points for prediction. Need at least 5, but got ${trimmedData.length}.`);
+    const response = await fetch(`${SERVER_URL}/status`);
+    if (!response.ok) {
+      throw new Error('ML server is not responding');
     }
-
-    onProgress({ 
-      stage: "data", 
-      message: `Using ${trimmedData.length} data points for analysis`, 
-      percent: 10,
-      dataPoints: trimmedData.length
-    });
-
-    // Generate a more descriptive model ID that includes all training parameters
-    // If a specific model ID is not provided by the caller
-    const generatedModelId = modelId || 
-      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${trimmedData.length}`;
+    console.log('ML server is running');
+    initializeWebSocket();
     
-    // Use the generated model ID
-    const modelPath = path.join("models", generatedModelId);
-    let model;
-    let shouldTrain = true;
-    let savedMinPrice, savedRange, savedModelParams;
-
-    // Load saved model if available
-    if (fs.existsSync(path.join(modelPath, "model.json"))) {
-      try {
-        onProgress({ stage: "loading", message: "Loading saved model...", percent: 15 });
-        model = await tf.loadLayersModel(`file://${modelPath}/model.json`);
-        
-        // Load normalization parameters
-        if (fs.existsSync(path.join(modelPath, "params.json"))) {
-          const params = JSON.parse(fs.readFileSync(path.join(modelPath, "params.json"), 'utf8'));
-          savedMinPrice = params.minPrice;
-          savedRange = params.range;
-          savedModelParams = params;
-          
-          onProgress({ 
-            stage: "loading", 
-            message: "Using saved model and parameters", 
-            percent: 20,
-            modelInfo: {
-              inputSize: params.inputSize,
-              outputSize: params.outputSize,
-              saved: true,
-              epochs: params.epochs,
-              totalEpochs: params.totalEpochs || params.epochs,
-              batchSize: params.batchSize,
-              dataPoints: params.dataPoints || trimmedData.length,
-              created: params.created || params.trainingTime
-            }
-          });
-        }
-        
-        shouldTrain = false;
-      } catch (loadError) {
-        console.error("Error loading saved model:", loadError);
-        shouldTrain = true;
-      }
-    }
-
-    // Extract closing prices
-    const closingPrices = trimmedData.map(entry => entry.close);
-
-    // Normalize data
-    let minPrice, range;
-    
-    if (!shouldTrain && savedMinPrice !== undefined && savedRange !== undefined) {
-      // Use saved normalization parameters
-      minPrice = savedMinPrice;
-      range = savedRange;
-    } else {
-      // Calculate new normalization parameters
-      minPrice = Math.min(...closingPrices);
-      range = Math.max(...closingPrices) - minPrice;
-    }
-
-    if (range === 0) {
-      throw new Error("Cannot normalize data: all closing prices are identical.");
-    }
-
-    onProgress({ 
-      stage: "preprocessing", 
-      message: "Normalizing data...", 
-      percent: 25,
-      dataPoints: trimmedData.length,
-      minPrice,
-      range
-    });
-
-    // Normalize to [-1, 1] range for better training
-    const normalizedPrices = closingPrices.map(p => (2 * (p - minPrice) / range) - 1);
-
-    let windowSize;
-    
-    if (shouldTrain) {
-      // Prepare training data - use all available data points for training
-      const xs = [];
-      const ys = [];
-      
-      // Create sequences for training
-      windowSize = Math.min(60, Math.floor(trimmedData.length / 3)); // Use appropriate window size
-      
-      for (let i = 0; i <= normalizedPrices.length - windowSize - daysToPredict; i++) {
-        xs.push(normalizedPrices.slice(i, i + windowSize).map(v => [v]));
-        ys.push(normalizedPrices.slice(i + windowSize, i + windowSize + daysToPredict));
-      }
-
-      if (xs.length === 0 || ys.length === 0) {
-        throw new Error("Not enough samples for training.");
-      }
-
-      onProgress({ 
-        stage: "preparing", 
-        message: `Prepared ${xs.length} training samples`, 
-        percent: 30,
-        samples: xs.length,
-        windowSize
-      });
-
-      // Convert to tensors
-      const tensorXs = tf.tensor3d(xs, [xs.length, windowSize, 1]);
-      const tensorYs = tf.tensor2d(ys, [ys.length, daysToPredict]);
-
-      // Define the LSTM model
-      model = tf.sequential();
-      model.add(tf.layers.lstm({
-        units: 64,
-        returnSequences: true,
-        inputShape: [windowSize, 1]
-      }));
-      model.add(tf.layers.dropout({ rate: 0.2 }));
-      model.add(tf.layers.lstm({ units: 64, returnSequences: false }));
-      model.add(tf.layers.dropout({ rate: 0.2 }));
-      model.add(tf.layers.dense({ units: 32, activation: "relu" }));
-      model.add(tf.layers.dense({ units: daysToPredict }));
-
-      model.compile({
-        optimizer: tf.train.adam(0.001),
-        loss: "meanSquaredError"
-      });
-
-      onProgress({ 
-        stage: "training", 
-        message: "Starting model training...", 
-        percent: 40,
-        modelInfo: {
-          layers: [64, 64, 32, daysToPredict],
-          inputSize: windowSize,
-          outputSize: daysToPredict,
-          epochs: epochs,
-          totalEpochs: epochs,
-          batchSize: batchSize,
-          dataPoints: trimmedData.length,
-          minPrice,
-          range
-        }
-      });
-
-      // Train the model
-      const history = await model.fit(tensorXs, tensorYs, {
-        epochs: epochs,
-        batchSize: batchSize,
-        verbose: 1,
-        validationSplit: 0.2,
-        callbacks: {
-          onEpochEnd: (epoch, logs) => {
-            const progress = 40 + Math.round((epoch / epochs) * 40);
-            onProgress({ 
-              stage: "training", 
-              message: `Epoch ${epoch + 1}/${epochs}`, 
-              percent: progress, 
-              epoch: epoch + 1, 
-              totalEpochs: epochs, 
-              loss: logs.loss,
-              val_loss: logs.val_loss
-            });
-          }
-        }
-      });
-
-      // Save model and parameters
-      onProgress({ stage: "saving", message: "Saving trained model...", percent: 85 });
-
-      try {
-        await model.save(`file://${modelPath}`);
-        
-        // Save normalization parameters
-        const params = {
-          minPrice,
-          range,
-          inputSize: windowSize,
-          outputSize: daysToPredict,
-          batchSize,
-          epochs,
-          totalEpochs: epochs,
-          dataPoints: trimmedData.length,
-          created: new Date().toISOString()
-        };
-        
-        fs.writeFileSync(
-          path.join(modelPath, "params.json"), 
-          JSON.stringify(params), 
-          'utf8'
-        );
-        
-        onProgress({ 
-          stage: "saved", 
-          message: "Model saved successfully", 
-          percent: 90,
-          modelId: generatedModelId,
-          history: {
-            loss: history.history.loss,
-            val_loss: history.history.val_loss
-          },
-          modelInfo: {
-            inputSize: windowSize,
-            outputSize: daysToPredict,
-            epochs: epochs,
-            totalEpochs: epochs,
-            batchSize: batchSize,
-            created: new Date().toISOString(),
-            dataPoints: trimmedData.length,
-            minPrice,
-            range
-          }
+    // Get active models
+    try {
+      const activeModelsResponse = await fetch(`${SERVER_URL}/active-models`);
+      if (activeModelsResponse.ok) {
+        const { activeModels } = await activeModelsResponse.json();
+        activeModels.forEach((model: any) => {
+          activeModelTraining.add(model.modelId);
         });
-      } catch (saveError) {
-        console.error("Error saving model:", saveError);
-        onProgress({ 
-          stage: "error", 
-          message: `Failed to save model: ${saveError.message}`, 
-          percent: 90 
-        });
+        console.log('Retrieved active models from server:', activeModelTraining);
       }
-
-      tensorXs.dispose();
-      tensorYs.dispose();
-    } else {
-      // For loaded models, get the input size from the model
-      windowSize = model.inputs[0].shape[1];
-      
-      // Send progress with loaded model info
-      onProgress({
-        stage: "loaded",
-        message: "Model loaded successfully",
-        percent: 75,
-        modelInfo: {
-          inputSize: windowSize,
-          outputSize: daysToPredict,
-          epochs: savedModelParams?.epochs || 0,
-          totalEpochs: savedModelParams?.totalEpochs || savedModelParams?.epochs || 0,
-          batchSize: savedModelParams?.batchSize || 0,
-          created: savedModelParams?.created || savedModelParams?.trainingTime,
-          dataPoints: savedModelParams?.dataPoints || trimmedData.length,
-          minPrice,
-          range
-        }
-      });
+    } catch (err) {
+      console.error('Error fetching active models:', err);
     }
+    
+    return true;
+  } catch (error) {
+    console.error('Error connecting to ML server:', error);
+    throw new Error('Unable to connect to ML server. Please ensure it is running.');
+  }
+};
 
-    onProgress({ 
-      stage: "predicting", 
-      message: "Generating predictions...", 
-      percent: 95,
-      windowSize,
-      dataPoints: trimmedData.length
-    });
+// Check if a model is currently being trained
+export const isModelTraining = (modelId: string): boolean => {
+  return activeModelTraining.has(modelId);
+};
 
-    // Prepare for prediction - use the last available window
-    const inputWindowSize = model.inputs[0].shape[1];
-    const inputWindow = normalizedPrices.slice(-inputWindowSize).map(v => [v]);
-    const tensorInput = tf.tensor3d([inputWindow], [1, inputWindowSize, 1]);
+// Get all active training models
+export const getActiveTrainingModels = (): string[] => {
+  return Array.from(activeModelTraining);
+};
 
-    const predictionTensor = model.predict(tensorInput);
-    if (!predictionTensor) {
-      throw new Error("Model prediction returned undefined.");
-    }
+// Cancel an active training model
+export const cancelTraining = (modelId: string): boolean => {
+  if (!activeModelTraining.has(modelId)) {
+    console.warn(`Model ${modelId} is not currently training`);
+    return false;
+  }
+  
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected');
+    return false;
+  }
+  
+  // Send cancel message to server
+  websocket.send(JSON.stringify({
+    type: 'cancelTraining',
+    modelId
+  }));
+  
+  return true;
+};
 
-    const predictedNormalized = await predictionTensor.data();
-    predictionTensor.dispose();
-    tensorInput.dispose();
+// Helper to generate descriptive model ID with all parameters
+export const generateModelId = (
+  stockData: StockData,
+  sequenceLength: number,
+  epochs: number,
+  batchSize: number,
+  daysToPredict: number
+): string => {
+  return `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+};
 
-    // Convert back to original price range
-    const predictedPrices = Array.from(predictedNormalized).map(p => ((p + 1) * range / 2) + minPrice);
-
-    // Get the last date from the data
-    const lastDate = new Date(trimmedData[trimmedData.length - 1].date);
-
-    // Prepare prediction results
-    const predictions = [];
-    for (let i = 0; i < daysToPredict; i++) {
-      const predictionDate = new Date(lastDate);
-      predictionDate.setDate(lastDate.getDate() + i + 1);
-
-      // Skip weekends (Saturday = 6, Sunday = 0)
-      while (predictionDate.getDay() === 6 || predictionDate.getDay() === 0) {
-        predictionDate.setDate(predictionDate.getDate() + 1);
-      }
-
-      predictions.push({
-        date: predictionDate.toISOString().split("T")[0],
-        prediction: predictedPrices[i] || null
-      });
-    }
-
-    // Clean up memory
-    if (!shouldTrain) {
-      model.dispose();
-    }
-
-    onProgress({ 
-      stage: "completed", 
-      message: "Prediction complete!", 
-      percent: 100,
-      dataPoints: trimmedData.length,
-      modelId: generatedModelId
-    });
-
-    return {
-      predictions,
-      modelData: {
-        modelId: generatedModelId,
-        isExistingModel: !shouldTrain,
-        min: minPrice,
-        range: range,
-        dataPoints: trimmedData.length,
-        params: { 
-          inputSize: windowSize || model.inputs[0].shape[1], 
-          outputSize: daysToPredict, 
-          epochs, 
-          totalEpochs: epochs,
-          batchSize,
-          dataPoints: trimmedData.length
+export const analyzeStock = async (
+  stockData: StockData,
+  sequenceLength: number,
+  epochs: number,
+  batchSize: number,
+  daysToPredict: number,
+  onProgress: (progress: any) => void,
+  signal: AbortSignal,
+  modelId?: string
+): Promise<{
+  modelData: any;
+  predictions: PredictionResult[];
+}> => {
+  try {
+    // Generate a descriptive model ID if none is provided
+    const descriptiveModelId = modelId || 
+      generateModelId(stockData, sequenceLength, epochs, batchSize, daysToPredict);
+    
+    // Add WebSocket handler specifically for this model ID
+    const removeHandler = addWebSocketHandler((message) => {
+      // Only process messages for this specific model or without a modelId
+      if (message.modelId === descriptiveModelId || 
+         (!message.modelId && !descriptiveModelId) || 
+         (message.type === 'global')) {
+        
+        if (message.type === 'progress' || message.type === 'status') {
+          onProgress(message.data);
         }
       }
+    }, descriptiveModelId); // Register handler with the specific model ID
+    
+    // Make a deep copy of the stock data to avoid reference issues
+    const stockDataCopy = {
+      ...stockData,
+      timeSeries: [...stockData.timeSeries]
     };
 
+    // Validate data
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length < sequenceLength + 5) {
+      throw new Error(`Not enough data points for analysis. Need at least ${sequenceLength + 5}.`);
+    }
+
+    try {
+      const response = await fetch(`${SERVER_URL}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          stockData: stockDataCopy,
+          sequenceLength,
+          epochs,
+          batchSize,
+          daysToPredict,
+          modelId: descriptiveModelId,
+          // Add a flag to indicate this is part of multi-model training
+          isMultiModel: activeModelTraining.size > 1
+        }),
+        signal
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Server analysis failed');
+      }
+
+      const data = await response.json();
+      
+      // Note: Don't remove handler immediately to allow receiving final messages
+      // The server will notify us when training is complete
+
+      return {
+        modelData: data.modelData,
+        predictions: data.predictions
+      };
+    } catch (error) {
+      // If the request was aborted, we should throw an abort error
+      if (signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      throw error;
+    }
   } catch (error) {
-    console.error("Training and prediction error:", error);
-    onProgress({ 
-      stage: "error", 
-      message: error.message, 
-      percent: 0,
-      error: error.toString()
-    });
+    console.error("Analysis error:", error);
     throw error;
   }
-}
+};
+
+// Combine predictions from multiple models
+export const combinePredictions = async (
+  stockData: StockData,
+  modelIds: string[],
+  method: 'average' | 'weighted' | 'stacking' | 'bayesian' = 'average',
+  signal?: AbortSignal
+): Promise<{
+  combinedPredictions: PredictionResult[];
+  method: string;
+  usedModels: string[];
+  modelErrors?: string[];
+}> => {
+  try {
+    const response = await fetch(`${SERVER_URL}/models/combined-predict`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stockData,
+        modelIds,
+        method
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Combined prediction failed');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Combined prediction error:", error);
+    throw error;
+  }
+};
+
+// Start combo training with multiple configurations
+export const startComboTraining = async (
+  stockData: StockData,
+  configurations: Array<{
+    sequenceLength: number;
+    epochs: number;
+    batchSize: number;
+    daysToPredict: number;
+  }>,
+  signal?: AbortSignal
+): Promise<{
+  status: string;
+  totalJobs: number;
+  jobs: Array<{
+    modelId: string;
+    config: {
+      sequenceLength: number;
+      epochs: number;
+      batchSize: number;
+      daysToPredict: number;
+    };
+  }>;
+}> => {
+  try {
+    const response = await fetch(`${SERVER_URL}/combo-train`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        stockData,
+        configurations
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Combo training failed to start');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Combo training error:", error);
+    throw error;
+  }
+};

@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
@@ -7,6 +6,7 @@ import StockDetails from "@/components/StockDetails";
 import PredictionButton from "@/components/PredictionButton";
 import PredictionInsight from "@/components/PredictionInsight"; 
 import SavedModels from "@/components/SavedModels";
+import CombinedModelsPanel from "@/components/CombinedModelsPanel";
 import { StockData, PredictionResult } from "@/types/stock";
 import { getStockData } from "@/utils/api";
 import { ArrowLeft, BarChart3, BrainCircuit, History } from "lucide-react";
@@ -17,6 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import MultiTrainingDialog from "@/components/MultiTrainingDialog";
+import { useQuery } from "@tanstack/react-query";
 
 interface PredictionModel {
   modelId: string;
@@ -31,37 +32,51 @@ const StockView = () => {
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savedModels, setSavedModels] = useState<any[]>([]);
+
+  // Fetch stock data
+  const { data: stockDataResponse, isLoading: stockLoading, error: stockError } = useQuery({
+    queryKey: ['stock', symbol],
+    queryFn: () => getStockData(symbol || ''),
+    enabled: !!symbol,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+  
+  // Fetch saved models
+  const { data: savedModelsResponse, isLoading: modelsLoading } = useQuery({
+    queryKey: ['models'],
+    queryFn: async () => {
+      const response = await fetch('http://localhost:5000/api/models');
+      if (!response.ok) {
+        throw new Error('Failed to fetch models');
+      }
+      return response.json();
+    },
+    refetchInterval: 10000, // Refetch every 10 seconds to get updates on training
+  });
 
   useEffect(() => {
-    const fetchStock = async () => {
-      if (!symbol) {
-        setError("No stock symbol provided");
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const data = await getStockData(symbol);
-        
-        if (!data) {
-          setError("Failed to fetch stock data");
-        } else {
-          setStockData(data);
-        }
-      } catch (err) {
-        console.error("Error fetching stock:", err);
-        setError("Failed to fetch stock data. Please try again later.");
-        toast.error("Failed to fetch stock data");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchStock();
-  }, [symbol]);
+    if (stockDataResponse) {
+      setStockData(stockDataResponse);
+      setIsLoading(false);
+    }
+    
+    if (stockError) {
+      setError("Failed to fetch stock data");
+      setIsLoading(false);
+    }
+  }, [stockDataResponse, stockError]);
+  
+  useEffect(() => {
+    if (savedModelsResponse) {
+      // Filter models for this stock
+      const stockModels = savedModelsResponse.models.filter((model: any) => 
+        model.modelId.startsWith(symbol || '')
+      );
+      
+      setSavedModels(stockModels);
+    }
+  }, [savedModelsResponse, symbol]);
 
   const handlePredictionComplete = (newPredictions: PredictionResult[]) => {
     setCurrentPredictions(newPredictions);
@@ -198,10 +213,17 @@ const StockView = () => {
                         className="lg:col-span-2"
                         title={`Model Predictions: ${activeModelId || 'Current'}`}
                       />
-                      <SavedModels 
-                        stockData={stockData}
-                        onModelSelect={handleModelSelect}
-                      />
+                      <div className="space-y-6">
+                        <SavedModels 
+                          stockData={stockData}
+                          onModelSelect={handleModelSelect}
+                        />
+                        <CombinedModelsPanel
+                          stockData={stockData}
+                          savedModels={savedModels}
+                          onPredictionComplete={handlePredictionComplete}
+                        />
+                      </div>
                     </div>
                   </TabsContent>
                   

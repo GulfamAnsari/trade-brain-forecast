@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,13 +20,31 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { StockData, PredictionResult } from "@/types/stock";
-import { BrainCircuit, Plus, Minus, Loader2, RefreshCw } from "lucide-react";
+import { BrainCircuit, Plus, Minus, Loader2, RefreshCw, X, Sparkles, Zap } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { analyzeStock } from "@/utils/ml";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { 
+  analyzeStock, 
+  addWebSocketHandler, 
+  getActiveTrainingModels, 
+  isModelTraining,
+  cancelTraining,
+  generateModelId,
+  startComboTraining
+} from "@/utils/ml";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "./ui/card";
 import { Badge } from "./ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "./ui/checkbox";
+import { Alert, AlertDescription } from "./ui/alert";
+import { ScrollArea } from "./ui/scroll-area";
 
 interface MultiTrainingDialogProps {
   stockData: StockData;
@@ -40,10 +57,20 @@ interface ModelConfig {
   epochs: number;
   batchSize: number;
   daysToPredict: number;
-  status: "pending" | "training" | "complete" | "error";
+  status: "pending" | "training" | "complete" | "error" | "cancelled";
   progress: number;
   message: string;
   abortController?: AbortController;
+}
+
+interface ComboConfig {
+  sequenceLengths: string[];
+  epochs: number[];
+  batchSizes: number[];
+  daysToPredict: number;
+  selectedSequenceLengths: string[];
+  selectedEpochs: number[];
+  selectedBatchSizes: number[];
 }
 
 const defaultModelConfig: Omit<ModelConfig, "id" | "status" | "progress" | "message"> = {
@@ -51,6 +78,16 @@ const defaultModelConfig: Omit<ModelConfig, "id" | "status" | "progress" | "mess
   epochs: 100,
   batchSize: 32,
   daysToPredict: 30,
+};
+
+const defaultComboConfig: ComboConfig = {
+  sequenceLengths: ["360", "720", "1800", "Full data"],
+  epochs: [1000, 2000, 5000, 10000],
+  batchSizes: [2, 4, 8, 16, 32, 64],
+  daysToPredict: 30,
+  selectedSequenceLengths: ["360", "720"],
+  selectedEpochs: [1000, 2000],
+  selectedBatchSizes: [16, 32],
 };
 
 const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingDialogProps) => {
@@ -68,6 +105,150 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   const [trainingComplete, setTrainingComplete] = useState(false);
   const [lastCompletedModelPredictions, setLastCompletedModelPredictions] = useState<PredictionResult[] | null>(null);
   const [activeTab, setActiveTab] = useState("configure");
+  const [comboConfig, setComboConfig] = useState<ComboConfig>(defaultComboConfig);
+  const [comboJobs, setComboJobs] = useState<any[]>([]);
+  const [comboTrainingActive, setComboTrainingActive] = useState(false);
+  
+  // Listen for global WebSocket messages about training status
+  useEffect(() => {
+    const removeHandler = addWebSocketHandler((message) => {
+      // Handle combo training started event
+      if (message.type === 'comboTrainingStarted') {
+        setComboJobs(message.data.jobs);
+        setComboTrainingActive(true);
+        
+        toast.info(`Started combo training with ${message.data.totalJobs} configurations`);
+        setActiveTab("comboStatus");
+      }
+      
+      // Handle status updates for models
+      if (message.type === 'status' && message.modelId) {
+        const modelId = message.modelId;
+        
+        // Check if this is a combo training job
+        const isComboJob = comboJobs.some(job => job.modelId === modelId);
+        
+        if (isComboJob) {
+          // Update combo job status
+          setComboJobs(prevJobs => {
+            return prevJobs.map(job => {
+              if (job.modelId === modelId) {
+                return {
+                  ...job,
+                  status: message.data.stage === 'error' ? 'error' : 
+                          message.data.stage === 'complete' ? 'complete' :
+                          message.data.stage === 'cancelled' ? 'cancelled' : 'training',
+                  progress: message.data.percent || 0,
+                  message: message.data.message || '',
+                  error: message.data.error,
+                  totalJobs: message.data.totalJobs,
+                  jobIndex: message.data.jobIndex
+                };
+              }
+              return job;
+            });
+          });
+          
+          // Check if all combo jobs are done
+          if (message.data.stage === 'complete' || message.data.stage === 'error' || message.data.stage === 'cancelled') {
+            setTimeout(() => {
+              setComboJobs(prevJobs => {
+                const allDone = prevJobs.every(job => 
+                  job.status === 'complete' || job.status === 'error' || job.status === 'cancelled');
+                
+                if (allDone) {
+                  setComboTrainingActive(false);
+                  toast.success("All combo training jobs completed");
+                }
+                
+                return prevJobs;
+              });
+            }, 1000);
+          }
+        }
+        
+        // Check if this is one of our regular models
+        const modelIndex = models.findIndex(m => generateModelId(
+          stockData,
+          m.sequenceLength,
+          m.epochs,
+          m.batchSize,
+          m.daysToPredict
+        ) === modelId);
+        
+        if (modelIndex >= 0) {
+          // Update model status
+          setModels(prevModels => {
+            const updatedModels = [...prevModels];
+            updatedModels[modelIndex] = {
+              ...updatedModels[modelIndex],
+              status: message.data.stage === 'error' ? 'error' : 
+                      message.data.stage === 'complete' ? 'complete' :
+                      message.data.stage === 'cancelled' ? 'cancelled' : 'training',
+              progress: message.data.percent || 0,
+              message: message.data.message || ''
+            };
+            return updatedModels;
+          });
+          
+          // Update currently training list
+          if (message.data.stage === 'complete' || message.data.stage === 'error' || message.data.stage === 'cancelled') {
+            setCurrentlyTraining(prev => prev.filter(id => id !== modelId));
+          }
+        }
+      }
+      
+      // Handle progress updates for models
+      if (message.type === 'progress' && message.modelId) {
+        const modelId = message.modelId;
+        
+        // Check if this is a combo training job
+        const isComboJob = comboJobs.some(job => job.modelId === modelId);
+        
+        if (isComboJob) {
+          // Update combo job progress
+          setComboJobs(prevJobs => {
+            return prevJobs.map(job => {
+              if (job.modelId === modelId) {
+                return {
+                  ...job,
+                  progress: message.data.percent || 0,
+                  message: message.data.message || ''
+                };
+              }
+              return job;
+            });
+          });
+        }
+        
+        // Check if this is one of our regular models
+        const modelIndex = models.findIndex(m => generateModelId(
+          stockData,
+          m.sequenceLength,
+          m.epochs,
+          m.batchSize,
+          m.daysToPredict
+        ) === modelId);
+        
+        if (modelIndex >= 0) {
+          // Update model progress
+          setModels(prevModels => {
+            const updatedModels = [...prevModels];
+            updatedModels[modelIndex] = {
+              ...updatedModels[modelIndex],
+              progress: message.data.percent || 0,
+              message: message.data.message || ''
+            };
+            return updatedModels;
+          });
+        }
+      }
+    }, 'global');
+    
+    return () => {
+      removeHandler();
+    };
+  }, [models, comboJobs, stockData]);
   
   // Auto-switch to status tab when training starts
   useEffect(() => {
@@ -75,6 +256,41 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       setActiveTab("status");
     }
   }, [currentlyTraining.length]);
+  
+  // Check for active training models on component mount
+  useEffect(() => {
+    const activeModels = getActiveTrainingModels();
+    
+    if (activeModels.length > 0) {
+      // Check if any of our models are currently training
+      models.forEach((model, index) => {
+        const modelId = generateModelId(
+          stockData,
+          model.sequenceLength,
+          model.epochs,
+          model.batchSize,
+          model.daysToPredict
+        );
+        
+        if (activeModels.includes(modelId)) {
+          // Update model status
+          setModels(prevModels => {
+            const updatedModels = [...prevModels];
+            updatedModels[index] = {
+              ...updatedModels[index],
+              status: 'training',
+              progress: 0,
+              message: 'Training in progress...'
+            };
+            return updatedModels;
+          });
+          
+          // Add to currently training list
+          setCurrentlyTraining(prev => [...prev, modelId]);
+        }
+      });
+    }
+  }, []);
   
   const handleAddModel = () => {
     setModels([
@@ -92,12 +308,26 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
   const handleRemoveModel = (id: string) => {
     if (models.length > 1) {
       const modelToRemove = models.find(m => m.id === id);
-      if (modelToRemove?.abortController) {
-        modelToRemove.abortController.abort();
+      if (modelToRemove) {
+        const modelId = generateModelId(
+          stockData,
+          modelToRemove.sequenceLength,
+          modelToRemove.epochs,
+          modelToRemove.batchSize,
+          modelToRemove.daysToPredict
+        );
+        
+        // Check if the model is training
+        if (isModelTraining(modelId)) {
+          // Cancel the training
+          cancelTraining(modelId);
+        }
+        
+        // Remove from currently training list
+        setCurrentlyTraining(prev => prev.filter(id => id !== modelId));
       }
       
       setModels(models.filter(model => model.id !== id));
-      setCurrentlyTraining(currentlyTraining.filter(modelId => modelId !== id));
     }
   };
 
@@ -122,31 +352,25 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       message: "Waiting to start..."
     })));
     
-    // Start training all models in parallel with a small delay between each
-    const startTrainingWithDelay = async () => {
-      const trainingPromises = [];
+    // Start training all models
+    const trainPromises = modelQueue.map(model => {
+      const modelId = generateModelId(
+        stockData,
+        model.sequenceLength,
+        model.epochs,
+        model.batchSize,
+        model.daysToPredict
+      );
       
-      for (let i = 0; i < modelQueue.length; i++) {
-        const model = modelQueue[i];
-        // Add to currently training state
-        setCurrentlyTraining(prev => [...prev, model.id]);
-        
-        // Start training the model and add the promise to the array
-        const trainingPromise = trainModel(model.id);
-        trainingPromises.push(trainingPromise);
-        
-        // Add a slight delay between starting each model to avoid overwhelming the server
-        if (i < modelQueue.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
+      // Add to currently training state
+      setCurrentlyTraining(prev => [...prev, modelId]);
       
-      // Wait for all models to finish training
-      return Promise.all(trainingPromises);
-    };
+      // Start training the model
+      return trainModel(model.id);
+    });
     
     try {
-      await startTrainingWithDelay();
+      await Promise.all(trainPromises);
       
       setCurrentlyTraining([]);
       setTrainingComplete(true);
@@ -177,8 +401,14 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       const abortController = new AbortController();
       updateModelConfig(model.id, { abortController });
       
-      // Generate a unique server-side model ID using the model.id
-      const serverModelId = `${stockData.symbol}_${model.id}_${Date.now()}`;
+      // Generate a unique server-side model ID using the model settings
+      const serverModelId = generateModelId(
+        stockData,
+        model.sequenceLength,
+        model.epochs,
+        model.batchSize,
+        model.daysToPredict
+      );
       
       const result = await analyzeStock(
         stockData,
@@ -214,14 +444,14 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       setLastCompletedModelPredictions(result.predictions);
       
       // Remove from currently training list
-      setCurrentlyTraining(prev => prev.filter(id => id !== model.id));
+      setCurrentlyTraining(prev => prev.filter(id => id !== serverModelId));
       
     } catch (error) {
       console.error(`Training error for model ${model.id}:`, error);
       
       if (error instanceof Error && error.name === "AbortError") {
         updateModelConfig(model.id, { 
-          status: "pending", 
+          status: "cancelled", 
           progress: 0,
           message: "Training cancelled" 
         });
@@ -234,7 +464,14 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       }
       
       // Remove from currently training list
-      setCurrentlyTraining(prev => prev.filter(id => id !== model.id));
+      const serverModelId = generateModelId(
+        stockData,
+        model.sequenceLength,
+        model.epochs,
+        model.batchSize,
+        model.daysToPredict
+      );
+      setCurrentlyTraining(prev => prev.filter(id => id !== serverModelId));
     }
   };
 
@@ -249,11 +486,182 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
       message: "Waiting to restart..."
     });
     
+    // Generate server model ID
+    const serverModelId = generateModelId(
+      stockData,
+      model.sequenceLength,
+      model.epochs,
+      model.batchSize,
+      model.daysToPredict
+    );
+    
     // Add to currently training state
-    setCurrentlyTraining(prev => [...prev, modelId]);
+    setCurrentlyTraining(prev => [...prev, serverModelId]);
     
     // Start training the model
     await trainModel(modelId);
+  };
+
+  const handleCancelModel = (modelId: string) => {
+    const model = models.find(m => m.id === modelId);
+    if (!model || model.status !== "training") return;
+    
+    // Generate server model ID
+    const serverModelId = generateModelId(
+      stockData,
+      model.sequenceLength,
+      model.epochs,
+      model.batchSize,
+      model.daysToPredict
+    );
+    
+    // Cancel training on the server
+    cancelTraining(serverModelId);
+    
+    // Update model status
+    updateModelConfig(modelId, {
+      status: "cancelled",
+      progress: 0,
+      message: "Training cancelled"
+    });
+    
+    // Remove from currently training list
+    setCurrentlyTraining(prev => prev.filter(id => id !== serverModelId));
+  };
+
+  const handleCancelComboJob = (modelId: string) => {
+    // Cancel training on the server
+    cancelTraining(modelId);
+    
+    // Update combo job status
+    setComboJobs(prevJobs => {
+      return prevJobs.map(job => {
+        if (job.modelId === modelId) {
+          return {
+            ...job,
+            status: 'cancelled',
+            progress: 0,
+            message: 'Training cancelled'
+          };
+        }
+        return job;
+      });
+    });
+  };
+  
+  const handleRetryComboJob = (modelId: string) => {
+    // We can't directly retry a combo job, so we'll create a new regular job with the same settings
+    const job = comboJobs.find(job => job.modelId === modelId);
+    if (!job) return;
+    
+    // Create a new model with the same settings
+    const newModel = {
+      id: `model-${models.length + 1}`,
+      sequenceLength: parseInt(job.config.sequenceLength),
+      epochs: job.config.epochs,
+      batchSize: job.config.batchSize,
+      daysToPredict: job.config.daysToPredict,
+      status: "pending",
+      progress: 0,
+      message: "Waiting to start..."
+    };
+    
+    // Add the new model
+    setModels(prevModels => [...prevModels, newModel]);
+    
+    // Switch to configure tab
+    setActiveTab("configure");
+    
+    toast.info("Created a new model with the same settings. You can train it from the Configure tab.");
+  };
+  
+  const handleStartComboTraining = async () => {
+    try {
+      // Calculate total number of configurations
+      const { selectedSequenceLengths, selectedEpochs, selectedBatchSizes } = comboConfig;
+      
+      if (selectedSequenceLengths.length === 0 || selectedEpochs.length === 0 || selectedBatchSizes.length === 0) {
+        toast.error("Please select at least one option from each category");
+        return;
+      }
+      
+      const totalConfigurations = selectedSequenceLengths.length * selectedEpochs.length * selectedBatchSizes.length;
+      
+      if (totalConfigurations === 0) {
+        toast.error("No configurations selected");
+        return;
+      }
+      
+      if (totalConfigurations > 50) {
+        const confirm = window.confirm(`You're about to start ${totalConfigurations} training jobs. This could take a long time and use substantial resources. Are you sure you want to continue?`);
+        if (!confirm) return;
+      }
+      
+      // Generate all combinations
+      const configurations = [];
+      
+      for (const seqLength of selectedSequenceLengths) {
+        for (const epoch of selectedEpochs) {
+          for (const batchSize of selectedBatchSizes) {
+            const sequenceLength = seqLength === "Full data" 
+              ? stockData.timeSeries.length
+              : parseInt(seqLength);
+              
+            configurations.push({
+              sequenceLength,
+              epochs: epoch,
+              batchSize,
+              daysToPredict: comboConfig.daysToPredict
+            });
+          }
+        }
+      }
+      
+      // Start combo training
+      const result = await startComboTraining(stockData, configurations);
+      
+      // Update combo jobs
+      setComboJobs(result.jobs.map(job => ({
+        ...job,
+        status: 'training',
+        progress: 0,
+        message: 'Starting training...'
+      })));
+      
+      setComboTrainingActive(true);
+      setActiveTab("comboStatus");
+      
+      toast.success(`Started ${result.totalJobs} training jobs`);
+    } catch (error) {
+      console.error("Error starting combo training:", error);
+      toast.error("Failed to start combo training");
+    }
+  };
+  
+  const updateComboConfig = (key: keyof ComboConfig, value: any) => {
+    setComboConfig(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+  
+  const toggleComboOption = (category: 'selectedSequenceLengths' | 'selectedEpochs' | 'selectedBatchSizes', value: string | number) => {
+    setComboConfig(prev => {
+      const current = [...prev[category]];
+      const valueStr = value.toString();
+      
+      if (current.includes(valueStr)) {
+        return {
+          ...prev,
+          [category]: current.filter(v => v.toString() !== valueStr)
+        };
+      } else {
+        return {
+          ...prev,
+          [category]: [...current, valueStr]
+        };
+      }
+    });
   };
 
   return (
@@ -273,9 +681,11 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
         </DialogHeader>
         
         <Tabs defaultValue="configure" value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid grid-cols-2 mb-4">
-            <TabsTrigger value="configure">Configure Models</TabsTrigger>
-            <TabsTrigger value="status">Training Status</TabsTrigger>
+          <TabsList className="grid grid-cols-4 mb-4">
+            <TabsTrigger value="configure">Configure</TabsTrigger>
+            <TabsTrigger value="status">Status</TabsTrigger>
+            <TabsTrigger value="combo">Combo Training</TabsTrigger>
+            <TabsTrigger value="comboStatus">Combo Status</TabsTrigger>
           </TabsList>
           
           <TabsContent value="configure" className="space-y-4">
@@ -288,7 +698,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                     size="sm"
                     className="h-7 w-7 p-0"
                     onClick={() => handleRemoveModel(model.id)}
-                    disabled={models.length <= 1 || currentlyTraining.includes(model.id)}
+                    disabled={models.length <= 1 || isModelTraining(generateModelId(
+                      stockData,
+                      model.sequenceLength,
+                      model.epochs,
+                      model.batchSize,
+                      model.daysToPredict
+                    ))}
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
@@ -302,7 +718,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       type="number"
                       value={model.sequenceLength}
                       onChange={(e) => updateModelConfig(model.id, { sequenceLength: parseInt(e.target.value) || 0 })}
-                      disabled={currentlyTraining.includes(model.id)}
+                      disabled={isModelTraining(generateModelId(
+                        stockData,
+                        model.sequenceLength,
+                        model.epochs,
+                        model.batchSize,
+                        model.daysToPredict
+                      ))}
                       min={1}
                     />
                   </div>
@@ -316,7 +738,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       onChange={(e) => updateModelConfig(model.id, { daysToPredict: parseInt(e.target.value) || 0 })}
                       min={1}
                       max={365}
-                      disabled={currentlyTraining.includes(model.id)}
+                      disabled={isModelTraining(generateModelId(
+                        stockData,
+                        model.sequenceLength,
+                        model.epochs,
+                        model.batchSize,
+                        model.daysToPredict
+                      ))}
                     />
                   </div>
                   
@@ -328,7 +756,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       value={model.epochs}
                       onChange={(e) => updateModelConfig(model.id, { epochs: parseInt(e.target.value) || 0 })}
                       min={1}
-                      disabled={currentlyTraining.includes(model.id)}
+                      disabled={isModelTraining(generateModelId(
+                        stockData,
+                        model.sequenceLength,
+                        model.epochs,
+                        model.batchSize,
+                        model.daysToPredict
+                      ))}
                     />
                   </div>
                   
@@ -340,7 +774,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       value={model.batchSize}
                       onChange={(e) => updateModelConfig(model.id, { batchSize: parseInt(e.target.value) || 0 })}
                       min={1}
-                      disabled={currentlyTraining.includes(model.id)}
+                      disabled={isModelTraining(generateModelId(
+                        stockData,
+                        model.sequenceLength,
+                        model.epochs,
+                        model.batchSize,
+                        model.daysToPredict
+                      ))}
                     />
                   </div>
                 </div>
@@ -377,11 +817,13 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                       <Badge variant={
                         model.status === "complete" ? "default" :
                         model.status === "training" ? "secondary" :
-                        model.status === "error" ? "destructive" : "outline"
+                        model.status === "error" ? "destructive" : 
+                        model.status === "cancelled" ? "outline" : "outline"
                       }>
                         {model.status === "pending" ? "Waiting" :
                          model.status === "training" ? "Training" :
-                         model.status === "complete" ? "Complete" : "Error"}
+                         model.status === "complete" ? "Complete" : 
+                         model.status === "cancelled" ? "Cancelled" : "Error"}
                       </Badge>
                     </div>
                     <CardDescription>
@@ -403,9 +845,21 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                           size="sm" 
                           className="mt-2 w-full"
                           onClick={() => handleRetryModel(model.id)}
-                          disabled={currentlyTraining.includes(model.id)}
+                          disabled={currentlyTraining.includes(generateModelId(
+                            stockData,
+                            model.sequenceLength,
+                            model.epochs,
+                            model.batchSize,
+                            model.daysToPredict
+                          ))}
                         >
-                          {currentlyTraining.includes(model.id) ? (
+                          {currentlyTraining.includes(generateModelId(
+                            stockData,
+                            model.sequenceLength,
+                            model.epochs,
+                            model.batchSize,
+                            model.daysToPredict
+                          )) ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               Retrying...
@@ -418,28 +872,221 @@ const MultiTrainingDialog = ({ stockData, onPredictionComplete }: MultiTrainingD
                           )}
                         </Button>
                       )}
+                      
+                      {model.status === "training" && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-2 w-full"
+                          onClick={() => handleCancelModel(model.id)}
+                        >
+                          <X className="mr-2 h-4 w-4" />
+                          Cancel Training
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
           </TabsContent>
+          
+          <TabsContent value="combo" className="space-y-4">
+            <Card className="p-4">
+              <CardHeader className="p-0 pb-4">
+                <CardTitle className="text-lg">Combo Training Configuration</CardTitle>
+                <CardDescription>
+                  Create multiple models with different configurations in one go.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0 space-y-4">
+                <div className="space-y-2">
+                  <FormLabel>Days to Predict</FormLabel>
+                  <Input
+                    type="number"
+                    value={comboConfig.daysToPredict}
+                    onChange={(e) => updateComboConfig('daysToPredict', parseInt(e.target.value) || 30)}
+                    min={1}
+                    max={365}
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <FormLabel>Sequence Lengths</FormLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {comboConfig.sequenceLengths.map((seqLength) => (
+                      <Badge
+                        key={seqLength}
+                        variant={comboConfig.selectedSequenceLengths.includes(seqLength) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => toggleComboOption('selectedSequenceLengths', seqLength)}
+                      >
+                        {seqLength}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <FormLabel>Epochs</FormLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {comboConfig.epochs.map((epoch) => (
+                      <Badge
+                        key={epoch}
+                        variant={comboConfig.selectedEpochs.includes(epoch) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => toggleComboOption('selectedEpochs', epoch)}
+                      >
+                        {epoch}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <FormLabel>Batch Sizes</FormLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {comboConfig.batchSizes.map((batchSize) => (
+                      <Badge
+                        key={batchSize}
+                        variant={comboConfig.selectedBatchSizes.includes(batchSize) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => toggleComboOption('selectedBatchSizes', batchSize)}
+                      >
+                        {batchSize}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <Alert>
+                  <AlertDescription>
+                    This will create {
+                      comboConfig.selectedSequenceLengths.length * 
+                      comboConfig.selectedEpochs.length * 
+                      comboConfig.selectedBatchSizes.length
+                    } model configurations and train them in sequence.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+              <CardFooter className="p-0 pt-4">
+                <Button 
+                  className="w-full"
+                  onClick={handleStartComboTraining}
+                  disabled={comboTrainingActive}
+                >
+                  {comboTrainingActive ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Combo Training in Progress...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      Start Combo Training
+                    </>
+                  )}
+                </Button>
+              </CardFooter>
+            </Card>
+          </TabsContent>
+          
+          <TabsContent value="comboStatus">
+            <ScrollArea className="h-[400px] pr-3">
+              <div className="space-y-4">
+                {comboJobs.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-8">
+                    No combo training jobs in progress. Create some from the Combo Training tab.
+                  </div>
+                ) : (
+                  comboJobs.map((job, index) => (
+                    <Card key={job.modelId} className="overflow-hidden">
+                      <CardHeader className="p-4 pb-2">
+                        <div className="flex justify-between items-center">
+                          <CardTitle className="text-base">
+                            Job {job.jobIndex !== undefined ? `${job.jobIndex + 1}/${job.totalJobs}` : index + 1}
+                          </CardTitle>
+                          <Badge variant={
+                            job.status === "complete" ? "default" :
+                            job.status === "training" ? "secondary" :
+                            job.status === "error" ? "destructive" : 
+                            job.status === "cancelled" ? "outline" : "outline"
+                          }>
+                            {job.status || "Waiting"}
+                          </Badge>
+                        </div>
+                        <CardDescription>
+                          Seq: {job.config.sequenceLength}, 
+                          Epochs: {job.config.epochs}, 
+                          Batch: {job.config.batchSize}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-0">
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs">
+                            <span>Progress:</span>
+                            <span>{job.progress || 0}%</span>
+                          </div>
+                          <Progress value={job.progress || 0} className="h-2" />
+                          <p className="text-xs text-muted-foreground">{job.message || "Waiting to start..."}</p>
+                          
+                          {job.status === "training" && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="mt-2 w-full"
+                              onClick={() => handleCancelComboJob(job.modelId)}
+                            >
+                              <X className="mr-2 h-4 w-4" />
+                              Cancel Training
+                            </Button>
+                          )}
+                          
+                          {(job.status === "error" || job.status === "cancelled") && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="mt-2 w-full"
+                              onClick={() => handleRetryComboJob(job.modelId)}
+                            >
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Create Similar Model
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
         </Tabs>
         
         <DialogFooter>
-          {currentlyTraining.length > 0 ? (
-            <Button disabled>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Training in progress... ({currentlyTraining.length} models)
-            </Button>
-          ) : trainingComplete ? (
+          {activeTab === "configure" && (
+            <>
+              {currentlyTraining.length > 0 ? (
+                <Button disabled>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Training in progress... ({currentlyTraining.length} models)
+                </Button>
+              ) : trainingComplete ? (
+                <Button onClick={() => setOpen(false)}>
+                  Close
+                </Button>
+              ) : (
+                <Button onClick={handleTrainAll}>
+                  <BrainCircuit className="mr-2 h-4 w-4" />
+                  Start Training
+                </Button>
+              )}
+            </>
+          )}
+          
+          {(activeTab === "status" || activeTab === "comboStatus" || activeTab === "combo") && (
             <Button onClick={() => setOpen(false)}>
               Close
-            </Button>
-          ) : (
-            <Button onClick={handleTrainAll}>
-              <BrainCircuit className="mr-2 h-4 w-4" />
-              Start Training
             </Button>
           )}
         </DialogFooter>

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "server": "cd server && nodemon server.js",
     "dev:server": "cd server && nodemon server.js",
-    "build:full": "node build.cjs"
+    "build:full": "node build.cjs",
+    "build:dev": "vite build --mode development"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

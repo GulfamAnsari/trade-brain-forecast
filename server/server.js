@@ -171,7 +171,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
   try {
     const { modelId } = req.params;
     const { stockData } = req.body;
-    
+    // stockData.timeSeries.splice(-30);
     if (!modelId) {
       return res.status(400).json({ error: 'Model ID is required' });
     }
@@ -548,6 +548,7 @@ app.post('/api/combine-models', async (req, res) => {
   try {
     const { stockData, modelIds, method = 'average' } = req.body;
     
+    // stockData.timeSeries.splice(-30);
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
     }
@@ -818,6 +819,7 @@ app.post('/api/cancel-training', async (req, res) => {
 app.post('/api/combo-training', async (req, res) => {
   try {
     const { stockData, configurations } = req.body;
+    // stockData.timeSeries.splice(-30);
     
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });

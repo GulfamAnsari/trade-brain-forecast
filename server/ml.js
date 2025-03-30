@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 // Create models directory if it doesn't exist
-const modelsDir = path.join(process.cwd(), 'models');
+const modelsDir = path.join(process.cwd(), '..', 'models');
 if (!fs.existsSync(modelsDir)) {
   fs.mkdirSync(modelsDir, { recursive: true });
 }
@@ -41,7 +41,7 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${trimmedData.length}`;
     
     // Use the generated model ID
-    const modelPath = path.join("models", generatedModelId);
+    const modelPath = path.join(modelsDir, generatedModelId);
     let model;
     let shouldTrain = true;
     let savedMinPrice, savedRange, savedModelParams;

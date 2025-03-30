@@ -21,7 +21,7 @@ const wss = new WebSocketServer({ server });
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '100mb' })); // Increase limit for large data transfers
-app.use(express.static(path.join(process.cwd(), 'build'))); // Serve static files from build folder
+app.use(express.static(path.join(process.cwd(), '..', 'build'))); // Serve static files from build folder
 
 // Track active WebSocket connections
 const clients = new Set();
@@ -117,7 +117,7 @@ const broadcast = (message, modelId = null) => {
 // Get all saved models
 app.get('/api/models', (req, res) => {
   try {
-    const modelsDir = path.join(process.cwd(), 'models');
+    const modelsDir = path.join(process.cwd(), '..',  'models');
     
     if (!fs.existsSync(modelsDir)) {
       return res.json({ models: [] });
@@ -178,7 +178,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
     
     console.log(`Making prediction with model ${modelId} for ${stockData.symbol}`);
     
-    const modelsDir = path.join(process.cwd(), 'models');
+    const modelsDir = path.join(process.cwd(), '..',  'models');
     const modelPath = path.join(modelsDir, modelId);
     
     if (!fs.existsSync(path.join(modelPath, 'model.json'))) {
@@ -274,7 +274,7 @@ app.delete('/api/models/:modelId', async (req, res) => {
       return res.status(400).json({ error: 'Model ID is required' });
     }
     
-    const modelsDir = path.join(process.cwd(), 'models');
+    const modelsDir = path.join(process.cwd(), '..',  'models');
     const modelPath = path.join(modelsDir, modelId);
     
     if (!fs.existsSync(modelPath)) {
@@ -554,7 +554,7 @@ app.post('/api/combine-models', async (req, res) => {
     
     console.log(`Combining models with method: ${method}, models: ${modelIds.join(', ')}`);
     
-    const modelsDir = path.join(process.cwd(), 'models');
+    const modelsDir = path.join(process.cwd(), '..',  'models');
     const modelErrors = [];
     const validModels = [];
     const predictionResults = [];
@@ -1068,7 +1068,7 @@ app.get('/api/status', (req, res) => {
 
 // Handle all other routes - serve the React app
 app.get('*', (req, res) => {
-  res.sendFile(path.join(process.cwd(), 'build', 'index.html'));
+  res.sendFile(path.join(process.cwd(), '..', 'build', 'index.html'));
 });
 
 server.listen(PORT, () => {

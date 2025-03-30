@@ -24,3 +24,6 @@ build
 *.sln
 *.sw?
 models
+
+# Local Netlify folder
+.netlify

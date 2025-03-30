@@ -13,7 +13,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = process.env.HOST || 'localhost';
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -1076,6 +1076,6 @@ app.get('*', (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port http://${HOST}:${PORT}`);
   console.log(`WebSocket server running on ws://${HOST}:${PORT}`);
 });

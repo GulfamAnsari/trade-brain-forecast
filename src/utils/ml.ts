@@ -1,8 +1,9 @@
 
+import { SERVER_URL as SERVER, SERVER_URL_WS } from "@/config";
 import { StockData, PredictionResult } from "@/types/stock";
 
-const SERVER_URL = "http://localhost:5000/api";
-const WS_URL = "ws://localhost:5000";
+const SERVER_URL = `${SERVER}/api`;
+const WS_URL = SERVER_URL_WS;
 
 let websocket: WebSocket | null = null;
 let messageHandlers: Map<string, Set<(data: any) => void>> = new Map();

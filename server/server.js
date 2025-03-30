@@ -7,9 +7,13 @@ import { trainAndPredict } from './ml.js';
 import fs from 'fs';
 import path from 'path';
 import { Worker } from 'worker_threads';
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || 'localhost';
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -1073,5 +1077,5 @@ app.get('*', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`WebSocket server running on ws://localhost:${PORT}`);
+  console.log(`WebSocket server running on ws://${HOST}:${PORT}`);
 });

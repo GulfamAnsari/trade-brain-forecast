@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import MultiTrainingDialog from "@/components/MultiTrainingDialog";
 import { useQuery } from "@tanstack/react-query";
+import { SERVER_URL } from "@/config";
 
 interface PredictionModel {
   modelId: string;
@@ -46,7 +47,7 @@ const StockView = () => {
   const { data: savedModelsResponse, isLoading: modelsLoading } = useQuery({
     queryKey: ['models'],
     queryFn: async () => {
-      const response = await fetch('http://localhost:5000/api/models');
+      const response = await fetch(`${SERVER_URL}/api/models`);
       if (!response.ok) {
         throw new Error('Failed to fetch models');
       }

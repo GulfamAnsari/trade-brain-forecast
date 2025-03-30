@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogCancel
 } from "./ui/alert-dialog";
+import { SERVER_URL } from "@/config";
 
 interface SavedModelsProps {
   stockData: StockData;
@@ -58,7 +59,7 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
       setIsLoading(true);
       setError(null);
       
-      const response = await fetch('http://localhost:5000/api/models');
+      const response = await fetch(`${SERVER_URL}/api/models`);
       if (!response.ok) {
         throw new Error('Failed to fetch models');
       }
@@ -97,7 +98,7 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
         }))
       };
       
-      const response = await fetch(`http://localhost:5000/api/models/${modelId}/predict`, {
+      const response = await fetch(`${SERVER_URL}/api/models/${modelId}/predict`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -138,7 +139,7 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
     try {
       setDeleting(modelToDelete.modelId);
       
-      const response = await fetch(`http://localhost:5000/api/models/${modelToDelete.modelId}`, {
+      const response = await fetch(`${SERVER_URL}/api/models/${modelToDelete.modelId}`, {
         method: 'DELETE',
       });
       

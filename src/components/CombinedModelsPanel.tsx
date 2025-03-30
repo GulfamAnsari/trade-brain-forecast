@@ -18,6 +18,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import { Alert, AlertDescription } from "./ui/alert";
+import { SERVER_URL } from "@/config";
 
 interface CombinedModelsPanelProps {
   stockData: StockData;
@@ -82,7 +83,7 @@ const CombinedModelsPanel = ({ stockData, savedModels, onPredictionComplete }: C
       
       console.log(`Combining ${selectedModels.length} models using ${combineMethod} method`);
       
-      const response = await fetch('http://localhost:5000/api/combine-models', {
+      const response = await fetch(`${SERVER_URL}/api/combine-models`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

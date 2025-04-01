@@ -8,7 +8,26 @@ if (!fs.existsSync(modelsDir)) {
   fs.mkdirSync(modelsDir, { recursive: true });
 }
 
-export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress, modelId, isPredictionOnly = false) {
+// Helper function to check if a date is a business day (not a weekend)
+function isBusinessDay(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6; // 0 is Sunday, 6 is Saturday
+}
+
+// Helper function to get next business day
+function getNextBusinessDay(date) {
+  const nextDay = new Date(date);
+  nextDay.setDate(date.getDate() + 1);
+  
+  // Keep adding days until we get a business day
+  while (!isBusinessDay(nextDay)) {
+    nextDay.setDate(nextDay.getDate() + 1);
+  }
+  
+  return nextDay;
+}
+
+export async function trainAndPredict(stockData, sequenceLength, epochs, batchSize, daysToPredict, onProgress, modelId, isPredictionOnly = false, predictPastDays = 0) {
   if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
     throw new Error("Stock data is empty or invalid.");
   }
@@ -35,10 +54,10 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
       dataPoints: trimmedData.length
     });
 
-    // Generate a more descriptive model ID that includes all training parameters
+    // Generate a more descriptive model ID that includes training parameters but NOT data points count
     // If a specific model ID is not provided by the caller
     const generatedModelId = modelId || 
-      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${trimmedData.length}`;
+      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}`;
     
     // Use the generated model ID
     const modelPath = path.join(modelsDir, generatedModelId);
@@ -308,10 +327,28 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
 
     // Prepare for prediction - use the last available window
     const inputWindowSize = model.inputs[0].shape[1];
-    const inputWindow = normalizedPrices.slice(-inputWindowSize).map(v => [v]);
+    
+    // Choose the input window based on whether we're predicting past days or future days
+    let inputWindow;
+    let startIndex;
+    
+    if (predictPastDays > 0) {
+      // For past prediction, use a window from the earlier part of the data
+      const pastPredictionStartIndex = trimmedData.length - inputWindowSize - predictPastDays;
+      if (pastPredictionStartIndex < 0) {
+        throw new Error("Not enough historical data to predict the requested past days");
+      }
+      inputWindow = normalizedPrices.slice(pastPredictionStartIndex, pastPredictionStartIndex + inputWindowSize).map(v => [v]);
+      startIndex = pastPredictionStartIndex + inputWindowSize;
+    } else {
+      // For future prediction, use the most recent window
+      inputWindow = normalizedPrices.slice(-inputWindowSize).map(v => [v]);
+      startIndex = trimmedData.length;
+    }
+    
     const tensorInput = tf.tensor3d([inputWindow], [1, inputWindowSize, 1]);
-
     const predictionTensor = model.predict(tensorInput);
+    
     if (!predictionTensor) {
       throw new Error("Model prediction returned undefined.");
     }
@@ -323,23 +360,24 @@ export async function trainAndPredict(stockData, sequenceLength, epochs, batchSi
     // Convert back to original price range
     const predictedPrices = Array.from(predictedNormalized).map(p => ((p + 1) * range / 2) + minPrice);
 
-    // Get the last date from the data
-    const lastDate = new Date(trimmedData[trimmedData.length - 1].date);
+    // Get the reference date (last date from data or a past date)
+    const referenceDate = predictPastDays > 0
+      ? new Date(trimmedData[startIndex - 1].date)
+      : new Date(trimmedData[trimmedData.length - 1].date);
 
-    // Prepare prediction results
+    // Prepare prediction results with proper business day logic
     const predictions = [];
+    let currentDate = new Date(referenceDate);
+    
     for (let i = 0; i < daysToPredict; i++) {
-      const predictionDate = new Date(lastDate);
-      predictionDate.setDate(lastDate.getDate() + i + 1);
-
-      // Skip weekends (Saturday = 6, Sunday = 0)
-      while (predictionDate.getDay() === 6 || predictionDate.getDay() === 0) {
-        predictionDate.setDate(predictionDate.getDate() + 1);
-      }
-
+      // Move to the next business day, skipping weekends
+      currentDate = getNextBusinessDay(currentDate);
+      
       predictions.push({
-        date: predictionDate.toISOString().split("T")[0],
-        prediction: predictedPrices[i] || null
+        date: currentDate.toISOString().split("T")[0],
+        prediction: predictedPrices[i] || null,
+        // If we're predicting the past, include the actual price for comparison
+        actual: predictPastDays > 0 && startIndex + i < trimmedData.length ? trimmedData[startIndex + i].close : undefined
       });
     }
 

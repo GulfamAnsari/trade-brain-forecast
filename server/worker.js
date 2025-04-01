@@ -12,7 +12,8 @@ const {
   descriptiveModelId,
   isPredictionOnly,
   jobIndex,
-  totalJobs
+  totalJobs,
+  predictPastDays // New parameter for predicting past days
 } = workerData;
 
 // Progress callback for sending progress updates back to the main thread
@@ -43,7 +44,8 @@ try {
     daysToPredict,
     onProgress,
     descriptiveModelId,
-    isPredictionOnly
+    isPredictionOnly,
+    predictPastDays // Pass the new parameter
   );
   
   // Send result back to parent thread

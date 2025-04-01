@@ -122,7 +122,7 @@ export const initializeTensorFlow = async () => {
   }
 };
 
-// Helper to generate descriptive model ID with all parameters
+// Helper to generate descriptive model ID with required parameters (no data points count)
 export const generateModelId = (
   stockData: StockData,
   sequenceLength: number,
@@ -130,7 +130,7 @@ export const generateModelId = (
   batchSize: number,
   daysToPredict: number
 ): string => {
-  return `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+  return `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}`;
 };
 
 export const analyzeStock = async (
@@ -141,7 +141,8 @@ export const analyzeStock = async (
   daysToPredict: number,
   onProgress: (progress: any) => void,
   signal: AbortSignal,
-  modelId?: string
+  modelId?: string,
+  predictPastDays: number = 0 // New parameter for past days prediction
 ): Promise<{
   modelData: any;
   predictions: PredictionResult[];
@@ -176,7 +177,9 @@ export const analyzeStock = async (
     }
 
     try {
-      const response = await fetch(`${SERVER_URL}/analyze`, {
+      const endpoint = predictPastDays > 0 ? `${SERVER_URL}/analyze-past` : `${SERVER_URL}/analyze`;
+      
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -189,7 +192,9 @@ export const analyzeStock = async (
           daysToPredict,
           modelId: descriptiveModelId,
           // Add a flag to indicate this is part of multi-model training
-          isMultiModel: activeModelTraining.size > 1
+          isMultiModel: activeModelTraining.size > 1,
+          // Add past days prediction parameter
+          predictPastDays: predictPastDays
         }),
         signal
       });

@@ -5,10 +5,13 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress";
 import { StockData, PredictionResult } from "@/types/stock";
 import { toast } from "sonner";
-import { BrainCircuit, LineChart, Loader2, ServerCrash, Settings, AlertTriangle } from "lucide-react";
+import { BrainCircuit, LineChart, Loader2, ServerCrash, Settings, AlertTriangle, History } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
 import { analyzeStock, initializeTensorFlow } from "@/utils/ml";
 import { SERVER_URL, generateModelId } from "@/config";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -38,6 +41,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [modelId, setModelId] = useState<string | null>(null);
   const [savedModels, setSavedModels] = useState<string[]>([]);
   const [modelExists, setModelExists] = useState(false);
+  const [predictPast, setPredictPast] = useState(false); // New state for past prediction option
+  const [predictionTab, setPredictionTab] = useState<'future' | 'past'>('future'); // New state for tab selection
 
   useEffect(() => {
     const initialize = async () => {
@@ -60,13 +65,13 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   useEffect(() => {
     if (stockData && settings) {
       // Calculate the model ID based on current settings and stock data
+      // Note: We no longer include dataPointsCount in the model ID
       const newModelId = generateModelId(
         stockData.symbol, 
         settings.sequenceLength, 
         settings.daysToPredict, 
         settings.epochs, 
-        settings.batchSize,
-        stockData.timeSeries.length
+        settings.batchSize
       );
       
       setModelId(newModelId);
@@ -111,12 +116,19 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         }))
       };
       
-      const response = await fetch(`${SERVER_URL}/api/models/${modelId}/predict`, {
+      const endpoint = predictionTab === 'past' 
+        ? `${SERVER_URL}/api/models/${modelId}/predict-past` 
+        : `${SERVER_URL}/api/models/${modelId}/predict`;
+      
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ stockData: cleanStockData }),
+        body: JSON.stringify({ 
+          stockData: cleanStockData,
+          pastDays: predictionTab === 'past' ? settings.daysToPredict : 0
+        }),
       });
       
       if (!response.ok) {
@@ -192,6 +204,9 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setDataPoints(null);
     
     try {
+      // Add past days prediction parameter
+      const predictPastDays = predictionTab === 'past' ? settings.daysToPredict : 0;
+      
       const result = await analyzeStock(
         stockData,
         settings.sequenceLength,
@@ -247,16 +262,18 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
             setModelId(progressData.modelId);
           }
         },
-        newAbortController.signal
+        newAbortController.signal,
+        undefined, // No special model ID
+        predictPastDays // Pass the past days prediction parameter
       );
       
       setModelData(result.modelData);
       onPredictionComplete(result.predictions);
       
       if (result.modelData.isExistingModel) {
-        toast.success("Analysis completed using saved model");
+        toast.success(`${predictionTab === 'past' ? 'Past' : 'Future'} prediction completed using saved model`);
       } else {
-        toast.success("Analysis completed and model saved for future use");
+        toast.success(`${predictionTab === 'past' ? 'Past' : 'Future'} prediction completed and model saved for future use`);
         // Update the saved models list
         fetchSavedModels();
       }
@@ -311,6 +328,29 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         </div>
       </CardHeader>
       <CardContent className="pb-2">
+        {!isLoading && (
+          <Tabs 
+            value={predictionTab} 
+            onValueChange={(v) => setPredictionTab(v as 'future' | 'past')} 
+            className="mb-4"
+          >
+            <TabsList className="w-full">
+              <TabsTrigger value="future" className="flex-1">Future Prediction</TabsTrigger>
+              <TabsTrigger value="past" className="flex-1">Past Validation</TabsTrigger>
+            </TabsList>
+            <TabsContent value="future">
+              <div className="text-sm">
+                Predict future stock prices based on historical data
+              </div>
+            </TabsContent>
+            <TabsContent value="past">
+              <div className="text-sm">
+                Predict past {settings.daysToPredict} days to validate model accuracy
+              </div>
+            </TabsContent>
+          </Tabs>
+        )}
+        
         {isLoading ? (
           <>
             <Progress value={progress} className="w-full h-2" />
@@ -521,13 +561,31 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               </>
             ) : modelData ? (
               <>
-                <LineChart className="mr-2 h-4 w-4" />
-                Train New Model
+                {predictionTab === 'past' ? (
+                  <>
+                    <History className="mr-2 h-4 w-4" />
+                    Validate Past Data
+                  </>
+                ) : (
+                  <>
+                    <LineChart className="mr-2 h-4 w-4" />
+                    Train New Model
+                  </>
+                )}
               </>
             ) : (
               <>
-                <LineChart className="mr-2 h-4 w-4" />
-                Train & Predict
+                {predictionTab === 'past' ? (
+                  <>
+                    <History className="mr-2 h-4 w-4" />
+                    Validate Past {settings.daysToPredict} Days
+                  </>
+                ) : (
+                  <>
+                    <LineChart className="mr-2 h-4 w-4" />
+                    Train & Predict
+                  </>
+                )}
               </>
             )}
           </Button>

@@ -1,274 +1,180 @@
-import { useState, useEffect, useMemo } from "react";
-import { 
-  ResponsiveContainer, 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend,
-  ReferenceLine,
-  Area,
-  ComposedChart
-} from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StockData } from "@/types/stock";
-import { cn } from "@/lib/utils";
+
+import React, { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { StockData, PredictionResult } from "@/types/stock";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from "recharts";
+import { formatDate } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { Maximize2 } from "lucide-react";
-import { Button } from "./ui/button";
 import FullScreenChart from "./FullScreenChart";
 
-interface PredictionData {
-  date: string;
-  prediction: number;
-}
-
-interface StockChartProps {
+export interface StockChartProps {
   stockData: StockData;
-  predictions?: PredictionData[];
-  className?: string;
+  predictions?: PredictionResult[];
   showPredictions?: boolean;
+  showHistorical?: boolean; // Add this prop to support historical display toggle
   title?: string;
+  height?: number;
+  className?: string;
 }
-
-interface ChartDataPoint {
-  date: string;
-  price?: number;
-  open?: number;
-  high?: number;
-  low?: number;
-  volume?: number;
-  prediction?: number;
-}
-
-const timeRanges = [
-  { label: "1M", days: 30 },
-  { label: "3M", days: 90 },
-  { label: "6M", days: 180 },
-  { label: "1Y", days: 365 },
-  { label: "All", days: Infinity },
-];
 
 const StockChart = ({ 
   stockData, 
   predictions = [], 
-  className,
-  showPredictions = true,
-  title = "Price Chart" 
+  showPredictions = false,
+  showHistorical = false, // Default to false if not provided
+  title = "Stock Price Chart", 
+  height = 400, 
+  className = "" 
 }: StockChartProps) => {
-  const [timeRange, setTimeRange] = useState<number>(30);
   const [showFullScreen, setShowFullScreen] = useState(false);
 
-  const chartData = useMemo(() => {
-    if (!stockData?.timeSeries) return [];
-
-    const filteredData = timeRange === Infinity 
-      ? [...stockData.timeSeries]
-      : stockData.timeSeries.slice(-timeRange);
-
-    const formattedData: ChartDataPoint[] = filteredData.map(data => ({
-      date: data.date,
-      price: data.close,
-      open: data.open,
-      high: data.high,
-      low: data.low,
-      volume: data.volume,
-    }));
-
-    if (showPredictions && predictions.length > 0) {
-      const existingDates = new Set(formattedData.map(d => d.date));
-
-      predictions.forEach(pred => {
-        if (!existingDates.has(pred.date)) {
-          formattedData.push({
-            date: pred.date,
-            prediction: pred.prediction,
-          });
-        } else {
-          const existingData = formattedData.find(d => d.date === pred.date);
-          if (existingData) {
-            existingData.prediction = pred.prediction;
-          }
-        }
-      });
-    }
-
-    return formattedData.sort((a, b) => 
-      new Date(a.date).getTime() - new Date(b.date).getTime()
+  if (!stockData || !stockData.timeSeries) {
+    return (
+      <Card className={className}>
+        <CardContent className="p-4">
+          <Skeleton className="h-[400px] w-full" />
+        </CardContent>
+      </Card>
     );
-  }, [stockData, timeRange, predictions, showPredictions]);
+  }
 
-  const priceChange = useMemo(() => {
-    if (!stockData?.timeSeries?.length) {
-      return { change: 0, changePercent: 0 };
-    }
+  const formattedData = stockData.timeSeries.map((dataPoint) => ({
+    ...dataPoint,
+    formattedDate: formatDate(new Date(dataPoint.date))
+  }));
 
-    const latestPrice = stockData.timeSeries[stockData.timeSeries.length - 1].close;
+  const latestDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
+  
+  // Combine historical data with prediction data
+  const combinedData = [...formattedData];
+  
+  // Add prediction data if available and showing predictions
+  if (predictions && showPredictions) {
+    // Only add predictions for future dates by default (unless showHistorical is true)
+    const predictionData = predictions
+      .filter(prediction => {
+        const predDate = new Date(prediction.date);
+        return showHistorical || predDate > latestDate;
+      })
+      .map(prediction => ({
+        date: prediction.date,
+        formattedDate: formatDate(new Date(prediction.date)),
+        close: null,
+        prediction: prediction.prediction
+      }));
     
-    let previousPrice;
-    if (timeRange === Infinity) {
-      previousPrice = stockData.timeSeries[0].close;
-    } else {
-      const startIndex = Math.max(0, stockData.timeSeries.length - timeRange);
-      previousPrice = stockData.timeSeries[startIndex].close;
-    }
+    combinedData.push(...predictionData);
+  }
 
-    const change = latestPrice - previousPrice;
-    const changePercent = (change / previousPrice) * 100;
+  // Sort the combined data by date
+  combinedData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    return { change, changePercent };
-  }, [stockData, timeRange]);
+  // Determine min and max values for better chart scaling
+  let minValue = Math.min(
+    ...combinedData
+      .map(data => [data.close, data.prediction])
+      .flat()
+      .filter(val => val !== null && val !== undefined) as number[]
+  );
+  
+  let maxValue = Math.max(
+    ...combinedData
+      .map(data => [data.close, data.prediction])
+      .flat()
+      .filter(val => val !== null && val !== undefined) as number[]
+  );
 
-  const { change, changePercent } = priceChange;
-  const isPositive = change >= 0;
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="custom-tooltip card-glass p-3 text-sm">
-          <p className="font-medium">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <div key={`tooltip-${index}`} className="flex gap-2 items-center">
-              <div 
-                className="w-3 h-3 rounded-full" 
-                style={{ backgroundColor: entry.color }} 
-              />
-              <p>
-                {entry.name === "price" ? "Close" : 
-                 entry.name === "prediction" ? "Prediction" : 
-                 entry.name.charAt(0).toUpperCase() + entry.name.slice(1)}
-                : {entry.value.toFixed(2)}
-              </p>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
-
-  const formatDate = (date: string) => {
-    const d = new Date(date);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
+  // Add some padding to the min and max values
+  const range = maxValue - minValue;
+  minValue = minValue - range * 0.05;
+  maxValue = maxValue + range * 0.05;
 
   return (
     <>
-      <Card className={cn("overflow-hidden", className)}>
-        <CardHeader className="space-y-0 pb-2">
-          <div className="flex justify-between items-center">
-            <CardTitle className="text-xl">
-              {title}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              <div className={isPositive ? "text-success" : "text-danger"}>
-                <span className="text-xs font-medium">
-                  {isPositive ? "+" : ""}{change.toFixed(2)} ({changePercent.toFixed(2)}%)
-                </span>
-              </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="p-1 h-auto" 
-                onClick={() => setShowFullScreen(true)}
-              >
-                <Maximize2 className="h-4 w-4" />
-              </Button>
-            </div>
+      <Card className={className}>
+        <CardContent className="p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold">{title}</h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowFullScreen(true)}
+              title="View Full Screen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
           </div>
-          <div className="flex items-center justify-between mt-2">
-            <div className="flex gap-1">
-              {timeRanges.map((range) => (
-                <button
-                  key={range.label}
-                  className={cn(
-                    "px-3 py-1 text-xs font-medium rounded-full transition-colors",
-                    timeRange === range.days
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                  )}
-                  onClick={() => setTimeRange(range.days)}
-                >
-                  {range.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0 pb-4">
-          <div className="w-full h-[300px] mt-2">
+          <div style={{ height: `${height}px` }} className="w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorPrediction" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="hsl(var(--accent-foreground))" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <LineChart
+                data={combinedData}
+                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
-                  dataKey="date" 
-                  tickFormatter={formatDate} 
-                  minTickGap={30}
+                  dataKey="formattedDate"
                   tick={{ fontSize: 12 }}
-                  tickMargin={10}
-                  className="text-xs text-muted-foreground"
+                  interval="preserveStartEnd" 
                 />
                 <YAxis 
-                  domain={['auto', 'auto']}
+                  domain={[minValue, maxValue]} 
                   tick={{ fontSize: 12 }}
-                  tickMargin={10}
-                  className="text-xs text-muted-foreground"
+                  tickFormatter={(value) => value.toFixed(1)}
                 />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                <Area 
-                  type="monotone" 
-                  dataKey="price" 
-                  name="Price"
-                  stroke="hsl(var(--primary))" 
-                  fillOpacity={1}
-                  fill="url(#colorPrice)"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 6 }}
+                <Tooltip
+                  formatter={(value, name) => [
+                    `₹${Number(value).toFixed(2)}`, 
+                    name === "prediction" ? "Predicted Price" : "Actual Price"
+                  ]}
+                  labelFormatter={(label) => `Date: ${label}`}
                 />
-                {showPredictions && predictions && predictions.length > 0 && (
-                  <Line 
-                    type="monotone" 
-                    dataKey="prediction" 
-                    name="Prediction"
-                    stroke="hsl(var(--accent-foreground))" 
+                <Legend />
+                <ReferenceLine
+                  x={formatDate(latestDate)}
+                  stroke="#ff0000"
+                  strokeDasharray="3 3"
+                  label={{ value: "Today", position: "insideBottomRight" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="close"
+                  stroke="#8884d8"
+                  name="Actual Price"
+                  dot={{ r: 1 }}
+                  activeDot={{ r: 5 }}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+                {showPredictions && (
+                  <Line
+                    type="monotone"
+                    dataKey="prediction"
+                    stroke="#82ca9d"
                     strokeWidth={2}
-                    strokeDasharray="5 5"
+                    name="Predicted Price"
                     dot={{ r: 3 }}
-                    activeDot={{ r: 6 }}
+                    connectNulls
+                    isAnimationActive={false}
                   />
                 )}
-                <ReferenceLine 
-                  y={stockData.timeSeries[stockData.timeSeries.length - 1]?.close} 
-                  stroke="hsl(var(--muted-foreground))" 
-                  strokeDasharray="3 3" 
-                />
-              </ComposedChart>
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
-
-      <FullScreenChart 
-        open={showFullScreen} 
-        onOpenChange={setShowFullScreen} 
-        stockData={stockData} 
-        predictions={predictions}
-        title={title}
-        showPredictions={showPredictions}
-      />
+      
+      {showFullScreen && (
+        <FullScreenChart
+          stockData={stockData}
+          predictions={predictions}
+          showPredictions={showPredictions}
+          showHistorical={showHistorical}
+          title={title}
+          onClose={() => setShowFullScreen(false)}
+        />
+      )}
     </>
   );
 };

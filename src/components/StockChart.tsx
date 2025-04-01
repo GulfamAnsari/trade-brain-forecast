@@ -19,6 +19,18 @@ export interface StockChartProps {
   className?: string;
 }
 
+// Create a type for chart data points
+interface ChartDataPoint {
+  date: string;
+  formattedDate: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+  prediction?: number;
+}
+
 const StockChart = ({ 
   stockData, 
   predictions = [], 
@@ -40,7 +52,7 @@ const StockChart = ({
     );
   }
 
-  const formattedData = stockData.timeSeries.map((dataPoint) => ({
+  const formattedData: ChartDataPoint[] = stockData.timeSeries.map((dataPoint) => ({
     ...dataPoint,
     formattedDate: formatDate(new Date(dataPoint.date))
   }));
@@ -48,12 +60,12 @@ const StockChart = ({
   const latestDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
   
   // Combine historical data with prediction data
-  const combinedData = [...formattedData];
+  const combinedData: ChartDataPoint[] = [...formattedData];
   
   // Add prediction data if available and showing predictions
   if (predictions && showPredictions) {
     // Only add predictions for future dates by default (unless showHistorical is true)
-    const predictionData = predictions
+    const predictionData: ChartDataPoint[] = predictions
       .filter(prediction => {
         const predDate = new Date(prediction.date);
         return showHistorical || predDate > latestDate;
@@ -61,7 +73,11 @@ const StockChart = ({
       .map(prediction => ({
         date: prediction.date,
         formattedDate: formatDate(new Date(prediction.date)),
-        close: null,
+        open: undefined,
+        high: undefined,
+        low: undefined,
+        close: undefined,
+        volume: undefined,
         prediction: prediction.prediction
       }));
     

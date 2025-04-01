@@ -1,28 +1,27 @@
 
-import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import StockChart from "@/components/StockChart";
 import { StockData, PredictionResult } from "@/types/stock";
 
 interface FullScreenChartProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   stockData: StockData;
   predictions?: PredictionResult[];
   title: string;
   showPredictions?: boolean;
+  showHistorical?: boolean;
+  onClose: () => void;
 }
 
 const FullScreenChart = ({
-  open,
-  onOpenChange,
   stockData,
   predictions = [],
   title,
-  showPredictions = true
+  showPredictions = true,
+  showHistorical = false,
+  onClose
 }: FullScreenChartProps) => {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-[90vw] w-[90vw] max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -30,7 +29,9 @@ const FullScreenChart = ({
         <div className="h-[80vh]">
           <StockChart 
             stockData={stockData} 
-            predictions={showPredictions ? predictions : []} 
+            predictions={predictions}
+            showPredictions={showPredictions}
+            showHistorical={showHistorical}
             className="h-full"
           />
         </div>

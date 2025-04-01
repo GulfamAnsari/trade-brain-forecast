@@ -31,6 +31,9 @@ interface ChartDataPoint {
   prediction?: number;
 }
 
+// Time frame options
+type TimeFrame = '1m' | '6m' | '1y' | '5y' | 'all';
+
 const StockChart = ({ 
   stockData, 
   predictions = [], 
@@ -41,6 +44,7 @@ const StockChart = ({
   className = "" 
 }: StockChartProps) => {
   const [showFullScreen, setShowFullScreen] = useState(false);
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('1y');
 
   if (!stockData || !stockData.timeSeries) {
     return (
@@ -58,6 +62,32 @@ const StockChart = ({
   }));
 
   const latestDate = new Date(stockData.timeSeries[stockData.timeSeries.length - 1].date);
+  
+  // Filter data based on selected time frame
+  const filterDataByTimeFrame = (data: ChartDataPoint[]): ChartDataPoint[] => {
+    const now = new Date();
+    let cutoffDate: Date;
+    
+    switch (timeFrame) {
+      case '1m':
+        cutoffDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case '6m':
+        cutoffDate = new Date(now.setMonth(now.getMonth() - 6));
+        break;
+      case '1y':
+        cutoffDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      case '5y':
+        cutoffDate = new Date(now.setFullYear(now.getFullYear() - 5));
+        break;
+      case 'all':
+      default:
+        return [...data];
+    }
+    
+    return data.filter(item => new Date(item.date) >= cutoffDate);
+  };
   
   // Combine historical data with prediction data
   const combinedData: ChartDataPoint[] = [...formattedData];
@@ -86,17 +116,20 @@ const StockChart = ({
 
   // Sort the combined data by date
   combinedData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  
+  // Apply time frame filter
+  const filteredData = filterDataByTimeFrame(combinedData);
 
   // Determine min and max values for better chart scaling
   let minValue = Math.min(
-    ...combinedData
+    ...filteredData
       .map(data => [data.close, data.prediction])
       .flat()
       .filter(val => val !== null && val !== undefined) as number[]
   );
   
   let maxValue = Math.max(
-    ...combinedData
+    ...filteredData
       .map(data => [data.close, data.prediction])
       .flat()
       .filter(val => val !== null && val !== undefined) as number[]
@@ -122,10 +155,50 @@ const StockChart = ({
               <Maximize2 className="h-4 w-4" />
             </Button>
           </div>
+          
+          {/* Time frame selector */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <Button 
+              variant={timeFrame === '1m' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('1m')}
+            >
+              1M
+            </Button>
+            <Button 
+              variant={timeFrame === '6m' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('6m')}
+            >
+              6M
+            </Button>
+            <Button 
+              variant={timeFrame === '1y' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('1y')}
+            >
+              1Y
+            </Button>
+            <Button 
+              variant={timeFrame === '5y' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('5y')}
+            >
+              5Y
+            </Button>
+            <Button 
+              variant={timeFrame === 'all' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('all')}
+            >
+              All
+            </Button>
+          </div>
+          
           <div style={{ height: `${height}px` }} className="w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={combinedData}
+                data={filteredData}
                 margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
@@ -188,6 +261,7 @@ const StockChart = ({
           showPredictions={showPredictions}
           showHistorical={showHistorical}
           title={title}
+          timeFrame={timeFrame}
           onClose={() => setShowFullScreen(false)}
         />
       )}

@@ -9,6 +9,7 @@ interface FullScreenChartProps {
   title: string;
   showPredictions?: boolean;
   showHistorical?: boolean;
+  timeFrame?: '1m' | '6m' | '1y' | '5y' | 'all';
   onClose: () => void;
 }
 
@@ -18,6 +19,7 @@ const FullScreenChart = ({
   title,
   showPredictions = true,
   showHistorical = false,
+  timeFrame = '1y',
   onClose
 }: FullScreenChartProps) => {
   return (

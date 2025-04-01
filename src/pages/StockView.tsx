@@ -223,7 +223,7 @@ const StockView = () => {
                           title={`Model Predictions: ${activeModelId || 'Current'}`}
                         />
                       </div>
-                      <div className="space-y-6">
+                      <div className="space-y-6" style={{ height: '60vh', overflow: 'scroll'}}>
                         <SavedModels 
                           stockData={stockData}
                           onModelSelect={handleModelSelect}

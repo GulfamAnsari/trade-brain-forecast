@@ -181,16 +181,6 @@ const StockView = () => {
                   <TabsContent value="prediction" className="space-y-4">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       <div className="lg:col-span-2 space-y-4">
-                        <div className="flex justify-between items-center">
-                          <h3 className="text-lg font-medium">Price Prediction Chart</h3>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => setShowHistorical(!showHistorical)}
-                          >
-                            {showHistorical ? "Hide Historical" : "Show Historical"}
-                          </Button>
-                        </div>
                         <StockChart 
                           stockData={stockData} 
                           predictions={getActivePredictions()} 
@@ -204,11 +194,14 @@ const StockView = () => {
                           stockData={stockData}
                           onPredictionComplete={handlePredictionComplete}
                         />
-                        <PredictionInsight 
-                          predictions={getActivePredictions()}
-                          currentPrice={getCurrentPrice()}
-                        />
                       </div>
+                      
+                    </div>
+                    <div>
+                      <PredictionInsight 
+                        predictions={getActivePredictions()}
+                        currentPrice={getCurrentPrice()}
+                      />
                     </div>
                   </TabsContent>
                   

@@ -940,7 +940,7 @@ app.post('/api/combo-training', async (req, res) => {
     });
     
     // Start the first few jobs (to avoid overwhelming the system)
-    const batchSize = 4; // Start with 4 jobs at once
+    const batchSize = 16; // Start with 4 jobs at once
     const initialBatch = trainingJobs.slice(0, batchSize);
     
     // Function to start a job

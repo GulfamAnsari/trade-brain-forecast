@@ -99,10 +99,6 @@ const StockChart = ({
   if (predictions && showPredictions) {
     // Only add predictions for future dates by default (unless showHistorical is true)
     const predictionData: ChartDataPoint[] = predictions
-      .filter(prediction => {
-        const predDate = new Date(prediction.date);
-        return showHistorical || predDate > latestDate;
-      })
       .map(prediction => ({
         date: prediction.date,
         formattedDate: formatDate(new Date(prediction.date)),
@@ -204,7 +200,6 @@ const StockChart = ({
               All
             </Button>
           </div>
-          
           <div style={{ height: `${height}px` }} className="w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart

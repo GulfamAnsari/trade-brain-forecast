@@ -10,8 +10,14 @@ import PredictionSettings from "./PredictionSettings";
 import { analyzeStock, initializeTensorFlow } from "@/utils/ml";
 import { SERVER_URL, generateModelId } from "@/config";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -39,10 +45,10 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [usingSavedModel, setUsingSavedModel] = useState(false);
   const [dataPoints, setDataPoints] = useState<number | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
-  const [savedModels, setSavedModels] = useState<string[]>([]);
+  const [savedModels, setSavedModels] = useState<{modelId: string; config?: any}[]>([]);
   const [modelExists, setModelExists] = useState(false);
-  const [predictPast, setPredictPast] = useState(false); // New state for past prediction option
-  const [predictionTab, setPredictionTab] = useState<'future' | 'past'>('future'); // New state for tab selection
+  const [predictionTab, setPredictionTab] = useState<'future' | 'past'>('future');
+  const [selectedModelId, setSelectedModelId] = useState<string>("");
 
   useEffect(() => {
     const initialize = async () => {
@@ -65,7 +71,6 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   useEffect(() => {
     if (stockData && settings) {
       // Calculate the model ID based on current settings and stock data
-      // Note: We no longer include dataPointsCount in the model ID
       const newModelId = generateModelId(
         stockData.symbol, 
         settings.sequenceLength, 
@@ -77,9 +82,21 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       setModelId(newModelId);
       
       // Check if this model already exists in saved models
-      setModelExists(savedModels.includes(newModelId));
+      setModelExists(savedModels.some(model => model.modelId === newModelId));
+      
+      // Set the selected model if it's not set yet and we have models
+      if (!selectedModelId && savedModels.length > 0) {
+        // Filter for models that match this stock
+        const stockModels = savedModels.filter(model => 
+          model.modelId.startsWith(stockData.symbol)
+        );
+        
+        if (stockModels.length > 0) {
+          setSelectedModelId(stockModels[0].modelId);
+        }
+      }
     }
-  }, [stockData, settings, savedModels]);
+  }, [stockData, settings, savedModels, selectedModelId]);
 
   const fetchSavedModels = async () => {
     try {
@@ -87,15 +104,35 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       if (!response.ok) throw new Error("Failed to fetch models");
       
       const data = await response.json();
-      const modelIds = data.models.map((model: any) => model.modelId);
-      setSavedModels(modelIds);
+      
+      // Set models with any additional config data
+      setSavedModels(data.models.map((model: any) => ({
+        modelId: model.modelId,
+        config: model.config || {}
+      })));
+      
+      // Filter for this specific stock's models
+      const stockModels = data.models.filter((model: any) => 
+        model.modelId.startsWith(stockData.symbol)
+      );
+      
+      // Set a default selected model if we have any for this stock
+      if (stockModels.length > 0 && !selectedModelId) {
+        setSelectedModelId(stockModels[0].modelId);
+      }
     } catch (error) {
       console.error("Error fetching saved models:", error);
     }
   };
 
   const handleLoadExistingModel = async () => {
-    if (!modelId) return;
+    // For past prediction, use selectedModelId; for future prediction use modelId
+    const modelToUse = predictionTab === 'past' ? selectedModelId : modelId;
+    
+    if (!modelToUse) {
+      toast.error("No model selected. Please select a model first.");
+      return;
+    }
     
     setIsLoading(true);
     setProgress(0);
@@ -117,8 +154,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       };
       
       const endpoint = predictionTab === 'past' 
-        ? `${SERVER_URL}/api/models/${modelId}/predict-past` 
-        : `${SERVER_URL}/api/models/${modelId}/predict`;
+        ? `${SERVER_URL}/api/models/${modelToUse}/predict-past` 
+        : `${SERVER_URL}/api/models/${modelToUse}/predict`;
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -146,7 +183,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       
       setModelData({
         isExistingModel: true,
-        modelId: modelId,
+        modelId: modelToUse,
         params: {
           inputSize: settings.sequenceLength,
           outputSize: settings.daysToPredict,
@@ -156,7 +193,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
       });
       
       onPredictionComplete(result.predictions);
-      toast.success('Prediction completed using existing model');
+      toast.success(`${predictionTab === 'past' ? 'Past validation' : 'Prediction'} completed using existing model`);
       
     } catch (error) {
       console.error("Error using existing model:", error);
@@ -184,7 +221,13 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     }
     
     // If model exists and we're not forcing training, load the existing model
-    if (modelExists && !forceTraining) {
+    if (modelExists && !forceTraining && predictionTab === 'future') {
+      handleLoadExistingModel();
+      return;
+    }
+    
+    // For past validation with selected model, use that instead of training
+    if (predictionTab === 'past' && selectedModelId && !forceTraining) {
       handleLoadExistingModel();
       return;
     }
@@ -306,6 +349,11 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     };
   }, []);
 
+  // Filter saved models to show only models for the current stock
+  const stockSpecificModels = savedModels.filter(model => 
+    model.modelId.startsWith(stockData.symbol)
+  );
+
   return (
     <Card className={className}>
       <CardHeader className="pb-2">
@@ -344,8 +392,31 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               </div>
             </TabsContent>
             <TabsContent value="past">
-              <div className="text-sm">
-                Predict past {settings.daysToPredict} days to validate model accuracy
+              <div className="space-y-4">
+                <div className="text-sm">
+                  Predict past {settings.daysToPredict} days to validate model accuracy
+                </div>
+                
+                {stockSpecificModels.length > 0 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="model-select">Select model for validation:</Label>
+                    <Select
+                      value={selectedModelId}
+                      onValueChange={setSelectedModelId}
+                    >
+                      <SelectTrigger id="model-select" className="w-full">
+                        <SelectValue placeholder="Select a model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {stockSpecificModels.map(model => (
+                          <SelectItem key={model.modelId} value={model.modelId}>
+                            {model.modelId.split('_').slice(1).join('_')}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             </TabsContent>
           </Tabs>
@@ -482,7 +553,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           </div>
         ) : (
           <div className="space-y-4">
-            {modelExists && (
+            {modelExists && predictionTab === 'future' && (
               <div className="bg-muted/50 p-3 rounded-md flex items-start gap-2">
                 <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
                 <div className="space-y-1">
@@ -523,16 +594,22 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               <span>Click the gear icon in the top-right to adjust parameters</span>
             </div>
             
-            {modelId && (
+            {modelId && predictionTab === 'future' && (
               <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
                 Model ID: {modelId}
+              </div>
+            )}
+            
+            {predictionTab === 'past' && selectedModelId && (
+              <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
+                Selected Model: {selectedModelId}
               </div>
             )}
           </div>
         )}
       </CardContent>
       <CardFooter>
-        {!isLoading && modelExists ? (
+        {!isLoading && modelExists && predictionTab === 'future' ? (
           <div className="grid grid-cols-2 gap-2 w-full">
             <Button
               variant="outline"
@@ -552,7 +629,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           <Button 
             onClick={() => handleRunPrediction()}
             className="w-full"
-            disabled={isLoading || !!serverError}
+            disabled={isLoading || !!serverError || (predictionTab === 'past' && !selectedModelId && stockSpecificModels.length > 0)}
           >
             {isLoading ? (
               <>

@@ -44,7 +44,7 @@ const StockChart = ({
   className = "" 
 }: StockChartProps) => {
   const [showFullScreen, setShowFullScreen] = useState(false);
-  const [timeFrame, setTimeFrame] = useState<TimeFrame>('1y');
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('1m');
 
   if (!stockData || !stockData.timeSeries) {
     return (
@@ -218,6 +218,12 @@ const StockChart = ({
                     name === "prediction" ? "Predicted Price" : "Actual Price"
                   ]}
                   labelFormatter={(label) => `Date: ${label}`}
+                  contentStyle={{ 
+                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '8px'
+                  }}
                 />
                 <Legend />
                 <ReferenceLine

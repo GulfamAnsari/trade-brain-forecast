@@ -13,7 +13,7 @@ export interface StockChartProps {
   stockData: StockData;
   predictions?: PredictionResult[];
   showPredictions?: boolean;
-  showHistorical?: boolean; // Add this prop to support historical display toggle
+  showHistorical?: boolean;
   title?: string;
   height?: number;
   className?: string;
@@ -35,7 +35,7 @@ const StockChart = ({
   stockData, 
   predictions = [], 
   showPredictions = false,
-  showHistorical = false, // Default to false if not provided
+  showHistorical = false,
   title = "Stock Price Chart", 
   height = 400, 
   className = "" 

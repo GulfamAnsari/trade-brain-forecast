@@ -1,4 +1,3 @@
-
 import { SERVER_URL as SERVER, SERVER_URL_WS } from "@/config";
 import { StockData, PredictionResult } from "@/types/stock";
 
@@ -122,7 +121,7 @@ export const initializeTensorFlow = async () => {
   }
 };
 
-// Helper to generate descriptive model ID with required parameters (no data points count)
+// Helper to generate descriptive model ID without data points count
 export const generateModelId = (
   stockData: StockData,
   sequenceLength: number,
@@ -142,7 +141,7 @@ export const analyzeStock = async (
   onProgress: (progress: any) => void,
   signal: AbortSignal,
   modelId?: string,
-  predictPastDays: number = 0 // New parameter for past days prediction
+  predictPastDays: number = 0 // Parameter for past days prediction
 ): Promise<{
   modelData: any;
   predictions: PredictionResult[];
@@ -194,7 +193,7 @@ export const analyzeStock = async (
           // Add a flag to indicate this is part of multi-model training
           isMultiModel: activeModelTraining.size > 1,
           // Add past days prediction parameter
-          predictPastDays: predictPastDays
+          predictPastDays
         }),
         signal
       });

@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -256,7 +255,6 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
         res.status(500).json({ error: `Worker exited with code ${code}` });
       }
     });
-    
   } catch (error) {
     console.error('Prediction error:', error);
     res.status(500).json({ error: error.message || 'Failed to make prediction' });
@@ -1137,6 +1135,107 @@ app.post('/api/combo-training', async (req, res) => {
   } catch (error) {
     console.error('Combo training error:', error);
     res.status(500).json({ error: error.message || 'Failed to start combo training' });
+  }
+});
+
+// Add a new endpoint for past prediction analysis
+app.post('/api/analyze-past', async (req, res) => {
+  try {
+    const { stockData, sequenceLength, epochs, batchSize, daysToPredict, modelId, predictPastDays } = req.body;
+    
+    if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
+      return res.status(400).json({ error: 'Invalid stock data provided' });
+    }
+    
+    if (!predictPastDays || predictPastDays <= 0) {
+      return res.status(400).json({ error: 'Invalid past days parameter provided' });
+    }
+    
+    console.log(`Analyzing past performance for ${stockData.symbol} with model ${modelId || 'to be created'}`);
+    
+    // Generate a descriptive model ID if not provided
+    const descriptiveModelId = modelId || 
+      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}`;
+    
+    // Check if model exists
+    const modelsDir = path.join(process.cwd(), '..', 'models');
+    const modelPath = path.join(modelsDir, descriptiveModelId);
+    const modelExists = fs.existsSync(path.join(modelPath, 'model.json')) && 
+                        fs.existsSync(path.join(modelPath, 'params.json'));
+    
+    if (!modelExists) {
+      return res.status(404).json({ error: `Model ${descriptiveModelId} not found. Please train the model first.` });
+    }
+    
+    // Clean stock data to avoid circular references
+    const cleanStockData = {
+      ...stockData,
+      timeSeries: stockData.timeSeries.map(item => ({
+        date: item.date,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: item.volume
+      }))
+    };
+    
+    // Read model parameters
+    const paramsPath = path.join(modelPath, 'params.json');
+    const params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
+    
+    // Create worker for past predictions
+    const worker = new Worker('./worker.js', {
+      workerData: {
+        stockData: cleanStockData,
+        sequenceLength: params.inputSize || params.sequenceLength,
+        epochs: params.epochs || 100,
+        batchSize: params.batchSize || 32,
+        daysToPredict: params.outputSize || params.daysToPredict || 30,
+        descriptiveModelId,
+        isPredictionOnly: true,
+        predictPastDays: predictPastDays
+      }
+    });
+    
+    let hasResponded = false;
+    
+    worker.on('message', (message) => {
+      if (hasResponded) return;
+      
+      if (message.type === 'complete') {
+        hasResponded = true;
+        
+        // Return predictions including past predictions
+        res.json({
+          predictions: message.predictions || [],
+          modelId: descriptiveModelId,
+          pastPredictions: message.pastPredictions || []
+        });
+      } else if (message.type === 'error') {
+        hasResponded = true;
+        res.status(500).json({ error: message.error || 'Failed to make past predictions' });
+      }
+    });
+    
+    worker.on('error', (error) => {
+      if (hasResponded) return;
+      
+      console.error(`Error predicting past with model ${descriptiveModelId}:`, error);
+      hasResponded = true;
+      res.status(500).json({ error: error.message || 'Failed to make past predictions' });
+    });
+    
+    worker.on('exit', (code) => {
+      if (code !== 0 && !hasResponded) {
+        console.error(`Worker exited with code ${code} for past prediction with model ${descriptiveModelId}`);
+        hasResponded = true;
+        res.status(500).json({ error: `Worker exited with code ${code}` });
+      }
+    });
+  } catch (error) {
+    console.error('Past prediction error:', error);
+    res.status(500).json({ error: error.message || 'Failed to make past predictions' });
   }
 });
 

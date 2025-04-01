@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CustomNavbar from "@/components/CustomNavbar";
@@ -9,7 +10,7 @@ import SavedModels from "@/components/SavedModels";
 import CombinedModelsPanel from "@/components/CombinedModelsPanel";
 import { StockData, PredictionResult } from "@/types/stock";
 import { getStockData } from "@/utils/api";
-import { ArrowLeft, BarChart3, BrainCircuit, History } from "lucide-react";
+import { ArrowLeft, BrainCircuit, History, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -34,6 +35,7 @@ const StockView = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savedModels, setSavedModels] = useState<any[]>([]);
+  const [showHistorical, setShowHistorical] = useState(false);
 
   // Fetch stock data
   const { data: stockDataResponse, isLoading: stockLoading, error: stockError } = useQuery({
@@ -151,15 +153,6 @@ const StockView = () => {
               <>
                 <StockDetails stockData={stockData} className="mb-8" />
                 
-                <div className="mb-8">
-                  <StockChart 
-                    stockData={stockData}
-                    className="w-full"
-                    showPredictions={false}
-                    title="Historical Price Chart"
-                  />
-                </div>
-                
                 <Tabs defaultValue="prediction" className="mb-8">
                   <div className="flex justify-between items-center mb-4">
                     <TabsList>
@@ -187,12 +180,25 @@ const StockView = () => {
                   
                   <TabsContent value="prediction" className="space-y-4">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      <StockChart 
-                        stockData={stockData} 
-                        predictions={getActivePredictions()} 
-                        className="lg:col-span-2"
-                        title="Price Prediction Chart"
-                      />
+                      <div className="lg:col-span-2 space-y-4">
+                        <div className="flex justify-between items-center">
+                          <h3 className="text-lg font-medium">Price Prediction Chart</h3>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => setShowHistorical(!showHistorical)}
+                          >
+                            {showHistorical ? "Hide Historical" : "Show Historical"}
+                          </Button>
+                        </div>
+                        <StockChart 
+                          stockData={stockData} 
+                          predictions={getActivePredictions()} 
+                          showPredictions={true}
+                          showHistorical={showHistorical}
+                          title="Price Prediction Chart"
+                        />
+                      </div>
                       <div className="space-y-6">
                         <PredictionButton
                           stockData={stockData}
@@ -208,12 +214,25 @@ const StockView = () => {
                   
                   <TabsContent value="models">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      <StockChart 
-                        stockData={stockData} 
-                        predictions={getActivePredictions()} 
-                        className="lg:col-span-2"
-                        title={`Model Predictions: ${activeModelId || 'Current'}`}
-                      />
+                      <div className="lg:col-span-2 space-y-4">
+                        <div className="flex justify-between items-center">
+                          <h3 className="text-lg font-medium">Model Predictions: {activeModelId || 'Current'}</h3>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => setShowHistorical(!showHistorical)}
+                          >
+                            {showHistorical ? "Hide Historical" : "Show Historical"}
+                          </Button>
+                        </div>
+                        <StockChart 
+                          stockData={stockData} 
+                          predictions={getActivePredictions()} 
+                          showPredictions={true}
+                          showHistorical={showHistorical}
+                          title={`Model Predictions: ${activeModelId || 'Current'}`}
+                        />
+                      </div>
                       <div className="space-y-6">
                         <SavedModels 
                           stockData={stockData}

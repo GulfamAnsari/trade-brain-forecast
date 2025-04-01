@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -121,7 +122,7 @@ const broadcast = (message, modelId = null) => {
 // Get all saved models
 app.get('/api/models', (req, res) => {
   try {
-    const modelsDir = path.join(process.cwd(), '..',  'models');
+    const modelsDir = path.join(process.cwd(), '..', 'models');
     
     if (!fs.existsSync(modelsDir)) {
       return res.json({ models: [] });
@@ -171,7 +172,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
   try {
     const { modelId } = req.params;
     const { stockData } = req.body;
-    // stockData.timeSeries.splice(-30);
+    
     if (!modelId) {
       return res.status(400).json({ error: 'Model ID is required' });
     }
@@ -182,7 +183,7 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
     
     console.log(`Making prediction with model ${modelId} for ${stockData.symbol}`);
     
-    const modelsDir = path.join(process.cwd(), '..',  'models');
+    const modelsDir = path.join(process.cwd(), '..', 'models');
     const modelPath = path.join(modelsDir, modelId);
     
     if (!fs.existsSync(path.join(modelPath, 'model.json'))) {
@@ -222,30 +223,37 @@ app.post('/api/models/:modelId/predict', async (req, res) => {
       }
     });
     
+    let hasResponded = false;
+    
     // Wait for prediction result
     worker.on('message', (message) => {
+      if (hasResponded) return;
+      
       if (message.type === 'complete') {
+        hasResponded = true;
         res.json({
           predictions: message.predictions || [],
           modelId: modelId
         });
       } else if (message.type === 'error') {
+        hasResponded = true;
         res.status(500).json({ error: message.error || 'Failed to make prediction' });
       }
     });
     
     worker.on('error', (error) => {
+      if (hasResponded) return;
+      
       console.error(`Error predicting with model ${modelId}:`, error);
+      hasResponded = true;
       res.status(500).json({ error: error.message || 'Failed to make prediction' });
     });
     
     worker.on('exit', (code) => {
-      if (code !== 0) {
+      if (code !== 0 && !hasResponded) {
         console.error(`Worker exited with code ${code} for prediction with model ${modelId}`);
-        // Only send error if response hasn't been sent yet
-        if (!res.headersSent) {
-          res.status(500).json({ error: `Worker exited with code ${code}` });
-        }
+        hasResponded = true;
+        res.status(500).json({ error: `Worker exited with code ${code}` });
       }
     });
     
@@ -278,7 +286,7 @@ app.delete('/api/models/:modelId', async (req, res) => {
       return res.status(400).json({ error: 'Model ID is required' });
     }
     
-    const modelsDir = path.join(process.cwd(), '..',  'models');
+    const modelsDir = path.join(process.cwd(), '..', 'models');
     const modelPath = path.join(modelsDir, modelId);
     
     if (!fs.existsSync(modelPath)) {
@@ -311,16 +319,20 @@ app.post('/api/analyze', async (req, res) => {
     
     console.log(`Analyzing stock data for ${stockData.symbol} with ${stockData.timeSeries.length} data points`);
     console.log(`Parameters: sequenceLength=${sequenceLength}, epochs=${epochs}, batchSize=${batchSize}, daysToPredict=${daysToPredict}, modelId=${modelId || 'none'}`);
-    console.log(`Is part of multi-model training: ${isMultiModel ? 'Yes' : 'No'}`);
     
     // Generate a more descriptive model ID if none is provided
     const descriptiveModelId = modelId || 
-      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+      `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}`;
+    
+    // Check if model already exists
+    const modelsDir = path.join(process.cwd(), '..', 'models');
+    const modelPath = path.join(modelsDir, descriptiveModelId);
+    const modelExists = fs.existsSync(path.join(modelPath, 'model.json')) && 
+                        fs.existsSync(path.join(modelPath, 'params.json'));
     
     // If this is part of a multi-model training, add to the tracking set
     if (isMultiModel && descriptiveModelId) {
       multiModelSessions.add(descriptiveModelId);
-      console.log(`Added ${descriptiveModelId} to multi-model tracking. Current multi-models: ${multiModelSessions.size}`);
     }
     
     // Add to active training sessions
@@ -379,7 +391,6 @@ app.post('/api/analyze', async (req, res) => {
         // Remove from multi-model tracking if applicable
         if (multiModelSessions.has(descriptiveModelId)) {
           multiModelSessions.delete(descriptiveModelId);
-          console.log(`Removed ${descriptiveModelId} from multi-model tracking. Remaining multi-models: ${multiModelSessions.size}`);
         }
         
         // Send final status
@@ -411,7 +422,6 @@ app.post('/api/analyze', async (req, res) => {
         // Remove from multi-model tracking if applicable
         if (multiModelSessions.has(descriptiveModelId)) {
           multiModelSessions.delete(descriptiveModelId);
-          console.log(`Removed ${descriptiveModelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
         }
         
         // Send error status
@@ -443,7 +453,6 @@ app.post('/api/analyze', async (req, res) => {
       // Remove from multi-model tracking if applicable
       if (multiModelSessions.has(descriptiveModelId)) {
         multiModelSessions.delete(descriptiveModelId);
-        console.log(`Removed ${descriptiveModelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
       }
       
       // Send error status
@@ -475,7 +484,6 @@ app.post('/api/analyze', async (req, res) => {
         // Remove from multi-model tracking if applicable
         if (multiModelSessions.has(descriptiveModelId)) {
           multiModelSessions.delete(descriptiveModelId);
-          console.log(`Removed ${descriptiveModelId} from multi-model tracking due to worker exit. Remaining multi-models: ${multiModelSessions.size}`);
         }
         
         // Send error status
@@ -497,7 +505,7 @@ app.post('/api/analyze', async (req, res) => {
       }
     });
     
-    // Don't wait for worker to complete if it's a multi-model request
+    // Don't wait for worker to complete if it's a multi-model request or we're using an existing model
     if (isMultiModel) {
       // For multi-model training, respond immediately
       responseSent = true;
@@ -505,8 +513,73 @@ app.post('/api/analyze', async (req, res) => {
         status: 'Training started in background',
         modelId: descriptiveModelId
       });
+    } else if (modelExists) {
+      // For existing models, use prediction endpoint directly
+      try {
+        const cleanStockData = {
+          ...stockData,
+          timeSeries: stockData.timeSeries.map(item => ({
+            date: item.date,
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume
+          }))
+        };
+        
+        // Read params
+        const params = JSON.parse(fs.readFileSync(path.join(modelPath, 'params.json'), 'utf8'));
+        
+        // Create a worker for prediction
+        const predictionWorker = new Worker('./worker.js', {
+          workerData: {
+            stockData: cleanStockData,
+            sequenceLength: params.inputSize || params.sequenceLength,
+            epochs: params.epochs || 100,
+            batchSize: params.batchSize || 32,
+            daysToPredict: params.outputSize || params.daysToPredict || 30,
+            descriptiveModelId,
+            isPredictionOnly: true
+          }
+        });
+        
+        predictionWorker.on('message', (message) => {
+          if (message.type === 'complete' && !responseSent) {
+            responseSent = true;
+            
+            // Clean up
+            workers.delete(descriptiveModelId);
+            activeTrainingSessions.delete(descriptiveModelId);
+            
+            console.log(`Used existing model ${descriptiveModelId} for prediction`);
+            
+            res.json({
+              modelData: {
+                ...params,
+                isExistingModel: true,
+                modelId: descriptiveModelId
+              },
+              predictions: message.predictions || []
+            });
+          }
+        });
+        
+        predictionWorker.on('error', (error) => {
+          if (!responseSent) {
+            console.error(`Error using existing model ${descriptiveModelId}:`, error);
+            // Fall back to training a new model
+            console.log(`Falling back to training a new model for ${descriptiveModelId}`);
+            // We don't set responseSent to true, so the original worker can send a response
+          }
+        });
+        
+      } catch (error) {
+        console.error(`Error using existing model ${descriptiveModelId}:`, error);
+        // Fall back to training a new model - original worker will handle the response
+      }
     }
-    // For non-multi-model requests, the worker will send the response
+    // For non-multi-model requests and non-existing models, the worker will send the response
     
   } catch (error) {
     console.error('Analysis error:', error);
@@ -525,7 +598,6 @@ app.post('/api/analyze', async (req, res) => {
       // Also remove from multi-model tracking if applicable
       if (multiModelSessions.has(descriptiveModelId)) {
         multiModelSessions.delete(descriptiveModelId);
-        console.log(`Removed ${descriptiveModelId} from multi-model tracking due to error. Remaining multi-models: ${multiModelSessions.size}`);
       }
     }
     
@@ -543,12 +615,11 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// Now let's fix the combine-models endpoint to ensure predictions are properly handled
+// Combine models endpoint
 app.post('/api/combine-models', async (req, res) => {
   try {
     const { stockData, modelIds, method = 'average' } = req.body;
     
-    // stockData.timeSeries.splice(-30);
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
     }
@@ -559,24 +630,22 @@ app.post('/api/combine-models', async (req, res) => {
     
     console.log(`Combining models with method: ${method}, models: ${modelIds.join(', ')}`);
     
-    const modelsDir = path.join(process.cwd(), '..',  'models');
+    const modelsDir = path.join(process.cwd(), '..', 'models');
     const modelErrors = [];
     const validModels = [];
-    const predictionResults = [];
+    let hasResponded = false;
     
     // First, gather predictions from all models
-    for (const modelId of modelIds) {
+    const predictionPromises = modelIds.map(async (modelId) => {
       const modelPath = path.join(modelsDir, modelId);
       
       if (!fs.existsSync(path.join(modelPath, 'model.json'))) {
-        modelErrors.push(`Model not found: ${modelId}`);
-        continue;
+        return { error: `Model not found: ${modelId}` };
       }
       
       const paramsPath = path.join(modelPath, 'params.json');
       if (!fs.existsSync(paramsPath)) {
-        modelErrors.push(`Model parameters not found: ${modelId}`);
-        continue;
+        return { error: `Model parameters not found: ${modelId}` };
       }
       
       try {
@@ -595,54 +664,59 @@ app.post('/api/combine-models', async (req, res) => {
           }))
         };
         
-        // Create a worker for prediction
-        const worker = new Worker('./worker.js', {
-          workerData: {
-            stockData: cleanStockData,
-            sequenceLength: params.inputSize || params.sequenceLength,
-            epochs: params.epochs || 100,
-            batchSize: params.batchSize || 32,
-            daysToPredict: params.outputSize || params.daysToPredict || 30,
-            descriptiveModelId: modelId,
-            isPredictionOnly: true
-          }
-        });
-        
-        // Wait for prediction result
-        const result = await new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
+          // Create a worker for prediction
+          const worker = new Worker('./worker.js', {
+            workerData: {
+              stockData: cleanStockData,
+              sequenceLength: params.inputSize || params.sequenceLength,
+              epochs: params.epochs || 100,
+              batchSize: params.batchSize || 32,
+              daysToPredict: params.outputSize || params.daysToPredict || 30,
+              descriptiveModelId: modelId,
+              isPredictionOnly: true
+            }
+          });
+          
           worker.on('message', (message) => {
             if (message.type === 'complete') {
-              resolve(message);
+              resolve({
+                modelId,
+                params,
+                predictions: message.predictions || []
+              });
             } else if (message.type === 'error') {
-              reject(new Error(message.error));
+              resolve({ error: `Error with model ${modelId}: ${message.error}` });
             }
           });
           
-          worker.on('error', reject);
+          worker.on('error', (error) => {
+            resolve({ error: `Error with model ${modelId}: ${error.message}` });
+          });
+          
           worker.on('exit', (code) => {
             if (code !== 0) {
-              reject(new Error(`Worker exited with code ${code}`));
+              resolve({ error: `Worker exited with code ${code} for model ${modelId}` });
             }
           });
         });
-        
-        // Store model info and predictions
-        if (result.predictions && result.predictions.length > 0) {
-          validModels.push({
-            modelId,
-            params,
-            predictions: result.predictions
-          });
-          
-          // Add these predictions to our results array
-          predictionResults.push(...result.predictions);
-        }
-        
       } catch (error) {
         console.error(`Error predicting with model ${modelId}:`, error);
-        modelErrors.push(`Error with model ${modelId}: ${error.message}`);
+        return { error: `Error with model ${modelId}: ${error.message}` };
       }
-    }
+    });
+    
+    // Wait for all predictions to complete
+    const results = await Promise.all(predictionPromises);
+    
+    // Process results
+    results.forEach(result => {
+      if (result.error) {
+        modelErrors.push(result.error);
+      } else if (result.predictions && result.predictions.length > 0) {
+        validModels.push(result);
+      }
+    });
     
     if (validModels.length === 0) {
       return res.status(400).json({ 
@@ -654,19 +728,12 @@ app.post('/api/combine-models', async (req, res) => {
     // Get the number of prediction days from the first valid model
     const daysToPredict = validModels[0].predictions.length;
     
-    // Ensure all models have the same number of prediction days
-    if (!validModels.every(model => model.predictions.length === daysToPredict)) {
-      return res.status(400).json({ 
-        error: 'Models have different prediction day lengths',
-        modelErrors
-      });
-    }
-    
     // Get all unique dates from all models
     const allDates = new Set();
     validModels.forEach(model => {
       model.predictions.forEach(pred => allDates.add(pred.date));
     });
+    
     const sortedDates = Array.from(allDates).sort();
     
     // Combine predictions based on method
@@ -760,12 +827,18 @@ app.post('/api/combine-models', async (req, res) => {
       });
     }
     
-    res.json({
-      predictions: combinedPredictions,
-      method,
-      usedModels: validModels.map(m => m.modelId),
-      modelErrors: modelErrors.length > 0 ? modelErrors : undefined
-    });
+    // Sort predictions by date
+    combinedPredictions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    if (!hasResponded) {
+      hasResponded = true;
+      res.json({
+        predictions: combinedPredictions,
+        method,
+        usedModels: validModels.map(m => m.modelId),
+        modelErrors: modelErrors.length > 0 ? modelErrors : undefined
+      });
+    }
     
   } catch (error) {
     console.error('Combined prediction error:', error);
@@ -819,7 +892,6 @@ app.post('/api/cancel-training', async (req, res) => {
 app.post('/api/combo-training', async (req, res) => {
   try {
     const { stockData, configurations } = req.body;
-    // stockData.timeSeries.splice(-30);
     
     if (!stockData || !stockData.timeSeries || stockData.timeSeries.length === 0) {
       return res.status(400).json({ error: 'Invalid stock data provided' });
@@ -836,7 +908,7 @@ app.post('/api/combo-training', async (req, res) => {
       const { sequenceLength, epochs, batchSize, daysToPredict } = config;
       
       // Generate a descriptive model ID
-      const modelId = `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}_dp${stockData.timeSeries.length}`;
+      const modelId = `${stockData.symbol}_seq${sequenceLength}_pred${daysToPredict}_ep${epochs}_bs${batchSize}`;
       
       return {
         ...config,
@@ -870,7 +942,7 @@ app.post('/api/combo-training', async (req, res) => {
     });
     
     // Start the first few jobs (to avoid overwhelming the system)
-    const batchSize = 16; // Start with 4 jobs at once
+    const batchSize = 4; // Start with 4 jobs at once
     const initialBatch = trainingJobs.slice(0, batchSize);
     
     // Function to start a job

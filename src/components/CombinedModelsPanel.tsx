@@ -12,7 +12,6 @@ import {
 import { StockData, PredictionResult } from "@/types/stock";
 import { Wand2, Loader2, BarChart3, Calculator } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { combinePredictions } from "@/utils/ml";
 import { toast } from "sonner";
 import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
@@ -108,7 +107,15 @@ const CombinedModelsPanel = ({ stockData, savedModels, onPredictionComplete }: C
         throw new Error("No predictions returned from combined models");
       }
       
-      onPredictionComplete(result.predictions);
+      // Process predictions to match the expected format
+      const processedPredictions: PredictionResult[] = result.predictions.map(
+        (pred: { date: string; prediction: number }) => ({
+          date: pred.date,
+          prediction: pred.prediction
+        })
+      );
+      
+      onPredictionComplete(processedPredictions);
       
       toast.success(
         `Combined ${result.usedModels.length} models using ${result.method} method`
@@ -126,18 +133,6 @@ const CombinedModelsPanel = ({ stockData, savedModels, onPredictionComplete }: C
     } finally {
       setIsLoading(false);
     }
-  };
-  
-  const getModelDetails = (modelId: string) => {
-    const model = savedModels.find(m => m.modelId === modelId);
-    if (!model) return null;
-    
-    return {
-      epochs: model.totalEpochs || model.epochs || 0,
-      sequenceLength: model.inputSize || 0,
-      dataPoints: model.dataPoints || 0,
-      outputSize: model.outputSize || 0
-    };
   };
   
   return (
@@ -207,7 +202,7 @@ const CombinedModelsPanel = ({ stockData, savedModels, onPredictionComplete }: C
                         htmlFor={`model-${model.modelId}`}
                         className="text-sm font-medium cursor-pointer"
                       >
-                        {model.modelId.split('_')[0]} 
+                        {model.outputSize} Day Forecast
                       </label>
                       <div className="text-xs text-muted-foreground truncate">
                         {model.modelId}

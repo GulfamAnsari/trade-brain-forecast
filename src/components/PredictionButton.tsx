@@ -5,9 +5,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress";
 import { StockData, PredictionResult } from "@/types/stock";
 import { toast } from "sonner";
-import { BrainCircuit, LineChart, Loader2, ServerCrash, Settings } from "lucide-react";
+import { BrainCircuit, LineChart, Loader2, ServerCrash, Settings, AlertTriangle } from "lucide-react";
 import PredictionSettings from "./PredictionSettings";
 import { analyzeStock, initializeTensorFlow } from "@/utils/ml";
+import { SERVER_URL, generateModelId } from "@/config";
 
 interface PredictionButtonProps {
   stockData: StockData;
@@ -17,7 +18,7 @@ interface PredictionButtonProps {
 
 const defaultSettings = {
   daysToPredict: 30,
-  sequenceLength: 360, // Default to 1 year (approximately 252 trading days)
+  sequenceLength: 360,
   epochs: 100,
   batchSize: 32
 };
@@ -35,6 +36,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
   const [usingSavedModel, setUsingSavedModel] = useState(false);
   const [dataPoints, setDataPoints] = useState<number | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [savedModels, setSavedModels] = useState<string[]>([]);
+  const [modelExists, setModelExists] = useState(false);
 
   useEffect(() => {
     const initialize = async () => {
@@ -43,6 +46,7 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         await initializeTensorFlow();
         console.log("Connected to ML server successfully");
         setServerConnected(true);
+        fetchSavedModels();
       } catch (error) {
         console.error("Failed to connect to ML server:", error);
         setServerError(error instanceof Error ? error.message : "Unknown error");
@@ -53,7 +57,106 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     initialize();
   }, []);
 
-  const handleRunPrediction = async () => {
+  useEffect(() => {
+    if (stockData && settings) {
+      // Calculate the model ID based on current settings and stock data
+      const newModelId = generateModelId(
+        stockData.symbol, 
+        settings.sequenceLength, 
+        settings.daysToPredict, 
+        settings.epochs, 
+        settings.batchSize,
+        stockData.timeSeries.length
+      );
+      
+      setModelId(newModelId);
+      
+      // Check if this model already exists in saved models
+      setModelExists(savedModels.includes(newModelId));
+    }
+  }, [stockData, settings, savedModels]);
+
+  const fetchSavedModels = async () => {
+    try {
+      const response = await fetch(`${SERVER_URL}/api/models`);
+      if (!response.ok) throw new Error("Failed to fetch models");
+      
+      const data = await response.json();
+      const modelIds = data.models.map((model: any) => model.modelId);
+      setSavedModels(modelIds);
+    } catch (error) {
+      console.error("Error fetching saved models:", error);
+    }
+  };
+
+  const handleLoadExistingModel = async () => {
+    if (!modelId) return;
+    
+    setIsLoading(true);
+    setProgress(0);
+    setProgressText("Loading existing model...");
+    setUsingSavedModel(true);
+    
+    try {
+      // Make a clean copy of stock data
+      const cleanStockData = {
+        ...stockData,
+        timeSeries: stockData.timeSeries.map(item => ({
+          date: item.date,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          volume: item.volume
+        }))
+      };
+      
+      const response = await fetch(`${SERVER_URL}/api/models/${modelId}/predict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ stockData: cleanStockData }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to make prediction');
+      }
+      
+      const result = await response.json();
+      
+      if (!result.predictions || result.predictions.length === 0) {
+        throw new Error('No predictions returned from model');
+      }
+      
+      console.log(`Prediction successful, received ${result.predictions.length} data points`);
+      
+      setModelData({
+        isExistingModel: true,
+        modelId: modelId,
+        params: {
+          inputSize: settings.sequenceLength,
+          outputSize: settings.daysToPredict,
+          epochs: settings.epochs,
+          batchSize: settings.batchSize
+        }
+      });
+      
+      onPredictionComplete(result.predictions);
+      toast.success('Prediction completed using existing model');
+      
+    } catch (error) {
+      console.error("Error using existing model:", error);
+      toast.error("Failed to use existing model. Training new one...");
+      // If loading failed, fall back to training
+      handleRunPrediction(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRunPrediction = async (forceTraining = false) => {
     if (!serverConnected) {
       if (serverError) {
         toast.error(`ML server connection failed: ${serverError}`);
@@ -65,6 +168,12 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     
     if (!stockData || stockData.timeSeries.length < 5) {
       toast.error(`Not enough data to make predictions. Need at least 5 data points.`);
+      return;
+    }
+    
+    // If model exists and we're not forcing training, load the existing model
+    if (modelExists && !forceTraining) {
+      handleLoadExistingModel();
       return;
     }
     
@@ -81,7 +190,6 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
     setTrainingStats(null);
     setUsingSavedModel(false);
     setDataPoints(null);
-    setModelId(null);
     
     try {
       const result = await analyzeStock(
@@ -149,6 +257,8 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
         toast.success("Analysis completed using saved model");
       } else {
         toast.success("Analysis completed and model saved for future use");
+        // Update the saved models list
+        fetchSavedModels();
       }
       
     } catch (error) {
@@ -332,9 +442,17 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
           </div>
         ) : (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Click the button below to run the prediction model.
-            </p>
+            {modelExists && (
+              <div className="bg-muted/50 p-3 rounded-md flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">This model configuration already exists</p>
+                  <p className="text-xs text-muted-foreground">
+                    You can use the existing trained model or train a new one
+                  </p>
+                </div>
+              </div>
+            )}
             
             <div className="text-sm font-medium">Current Parameters:</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
@@ -364,32 +482,56 @@ const PredictionButton = ({ stockData, onPredictionComplete, className }: Predic
               <Settings className="h-3 w-3" />
               <span>Click the gear icon in the top-right to adjust parameters</span>
             </div>
+            
+            {modelId && (
+              <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
+                Model ID: {modelId}
+              </div>
+            )}
           </div>
         )}
       </CardContent>
       <CardFooter>
-        <Button 
-          onClick={handleRunPrediction} 
-          className="w-full"
-          disabled={isLoading || !!serverError}
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing...
-            </>
-          ) : modelData ? (
-            <>
-              <LineChart className="mr-2 h-4 w-4" />
+        {!isLoading && modelExists ? (
+          <div className="grid grid-cols-2 gap-2 w-full">
+            <Button
+              variant="outline"
+              onClick={() => handleLoadExistingModel()}
+              disabled={isLoading || !!serverError}
+            >
+              Use Existing Model
+            </Button>
+            <Button
+              onClick={() => handleRunPrediction(true)}
+              disabled={isLoading || !!serverError}
+            >
               Train New Model
-            </>
-          ) : (
-            <>
-              <LineChart className="mr-2 h-4 w-4" />
-              Train & Predict
-            </>
-          )}
-        </Button>
+            </Button>
+          </div>
+        ) : (
+          <Button 
+            onClick={() => handleRunPrediction()}
+            className="w-full"
+            disabled={isLoading || !!serverError}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Processing...
+              </>
+            ) : modelData ? (
+              <>
+                <LineChart className="mr-2 h-4 w-4" />
+                Train New Model
+              </>
+            ) : (
+              <>
+                <LineChart className="mr-2 h-4 w-4" />
+                Train & Predict
+              </>
+            )}
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );

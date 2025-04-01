@@ -1,8 +1,8 @@
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { StockData, PredictionResult } from "@/types/stock";
 import { toast } from "sonner";
 import { Activity, Database, LineChart, CalendarClock, Loader2, Info, Trash2 } from "lucide-react";
@@ -164,23 +164,6 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
   const showModelInfo = (model: SavedModel) => {
     setSelectedModel(model);
     setInfoDialogOpen(true);
-  };
-
-  const handleRetryTraining = async (model: SavedModel) => {
-    try {
-      // Redirect to the multi-training dialog with prefilled values
-      // We'll implement this by passing the model configuration as a URL parameter
-      // This will be picked up by the MultiTrainingDialog component
-      
-      // For now, we'll just show a toast message
-      toast.info('Retrying training for this model configuration');
-      
-      // Future implementation could involve passing the model configuration to MultiTrainingDialog
-      // through a context or state management solution
-    } catch (error) {
-      console.error('Error retrying training:', error);
-      toast.error(error instanceof Error ? error.message : 'Error retrying training');
-    }
   };
 
   const formatDate = (dateString?: string) => {
@@ -445,17 +428,6 @@ const SavedModels = ({ stockData, onModelSelect, className }: SavedModelsProps) 
           )}
           
           <AlertDialogFooter>
-            <Button 
-              variant="outline" 
-              onClick={() => {
-                if (selectedModel) {
-                  handleRetryTraining(selectedModel);
-                  setInfoDialogOpen(false);
-                }
-              }}
-            >
-              Retry Training
-            </Button>
             <AlertDialogCancel>Close</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>

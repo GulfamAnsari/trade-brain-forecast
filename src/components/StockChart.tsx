@@ -32,7 +32,7 @@ interface ChartDataPoint {
 }
 
 // Time frame options
-type TimeFrame = '1m' | '6m' | '1y' | '5y' | 'all';
+type TimeFrame = '1m' | '6m' | '1y' | '2y' | '5y' | 'all';
 
 const StockChart = ({ 
   stockData, 
@@ -77,6 +77,9 @@ const StockChart = ({
         break;
       case '1y':
         cutoffDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      case '2y':
+        cutoffDate = new Date(now.setFullYear(now.getFullYear() - 2));
         break;
       case '5y':
         cutoffDate = new Date(now.setFullYear(now.getFullYear() - 5));
@@ -180,6 +183,13 @@ const StockChart = ({
               1Y
             </Button>
             <Button 
+              variant={timeFrame === '2y' ? "default" : "outline"} 
+              size="sm"
+              onClick={() => setTimeFrame('2y')}
+            >
+              2Y
+            </Button>
+            <Button 
               variant={timeFrame === '5y' ? "default" : "outline"} 
               size="sm"
               onClick={() => setTimeFrame('5y')}
@@ -201,15 +211,14 @@ const StockChart = ({
                 data={filteredData}
                 margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
               >
-                <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="formattedDate"
-                  tick={{ fontSize: 12 }}
+                  tick={{ fontSize: 10 }}
                   interval="preserveStartEnd" 
                 />
                 <YAxis 
                   domain={[minValue, maxValue]} 
-                  tick={{ fontSize: 12 }}
+                  tick={{ fontSize: 10 }}
                   tickFormatter={(value) => value.toFixed(1)}
                 />
                 <Tooltip
@@ -219,8 +228,8 @@ const StockChart = ({
                   ]}
                   labelFormatter={(label) => `Date: ${label}`}
                   contentStyle={{ 
-                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                    border: '1px solid #ccc',
+                    backgroundColor: 'hsl(var(--border))',
+                    border: '1px solid hsl(var(--border))',
                     borderRadius: '4px',
                     padding: '8px'
                   }}
@@ -237,7 +246,7 @@ const StockChart = ({
                   dataKey="close"
                   stroke="#8884d8"
                   name="Actual Price"
-                  dot={{ r: 1 }}
+                  dot={{ r: 0 }}
                   activeDot={{ r: 5 }}
                   isAnimationActive={false}
                   connectNulls
@@ -249,7 +258,7 @@ const StockChart = ({
                     stroke="#82ca9d"
                     strokeWidth={2}
                     name="Predicted Price"
-                    dot={{ r: 3 }}
+                    dot={{ r: 0 }}
                     connectNulls
                     isAnimationActive={false}
                   />
